@@ -4,3 +4,4 @@
 *.class
 *Test.java
 **/test/
+backend/sky-server/src/main/resources/appkication-dev.yml
