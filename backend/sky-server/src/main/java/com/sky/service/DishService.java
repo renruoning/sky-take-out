@@ -1,5 +1,7 @@
 package com.sky.service;
 
+import java.util.List;
+
 import com.sky.dto.DishDTO;
 import com.sky.dto.DishPageQueryDTO;
 import com.sky.result.PageResult;
@@ -12,6 +14,7 @@ public interface DishService {
      */
     public void saveWithFlavor(DishDTO dishDTO);
 
+    public void deleteBatch(List<Long> ids);
     /**
      * 菜品分页查询
      * 
