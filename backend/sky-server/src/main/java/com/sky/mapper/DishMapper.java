@@ -1,5 +1,7 @@
 package com.sky.mapper;
 
+import java.util.List;
+
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
@@ -23,7 +25,7 @@ public interface DishMapper {
     Dish getById(Long id);
 
     /**
-     * 根据id删除菜品信息
+     * 根据id删除单个菜品信息
      * 
      * @param id 菜品id
      */
@@ -54,4 +56,11 @@ public interface DishMapper {
      * @return
      */
     Page<DishVO> pageQuery(DishPageQueryDTO dishPageQueryDTO);
+
+    /**
+     * 根据id批量删除菜品信息
+     * 
+     * @param ids 菜品id列表
+     */
+    void deleteByIds(List<Long> ids);
 }
