@@ -4,6 +4,5 @@
 *.class
 *Test.java
 **/test/
-backend/sky-server/src/main/resources/appkication-dev.yml
-frontend/logs/error.log
-frontend/logs/access.log
+backend/sky-server/src/main/resources/application-dev.yml
+frontend/logs/

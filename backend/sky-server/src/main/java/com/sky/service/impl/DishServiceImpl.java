@@ -85,9 +85,12 @@ public class DishServiceImpl implements DishService {
             // 删除口味表中的口味信息
             dishFlavorMapper.deleteByDishId(id);
         }
+    }
+
     public PageResult pageQuery(DishPageQueryDTO dishPageQueryDTO) {
         PageHelper.startPage(dishPageQueryDTO.getPage(), dishPageQueryDTO.getPageSize());
         Page<DishVO> page = dishMapper.pageQuery(dishPageQueryDTO);
         return new PageResult(page.getTotal(), page.getResult());
     }
+
 }

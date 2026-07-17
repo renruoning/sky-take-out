@@ -57,6 +57,8 @@ public class DishController {
         log.info("批量删除菜品: {}", ids);
         dishService.deleteBatch(ids);
         return Result.success();
+    }
+
     @GetMapping("/page")
     @ApiOperation("菜品分页查询")
     public Result<PageResult> page(DishPageQueryDTO dishPageQueryDTO) {
