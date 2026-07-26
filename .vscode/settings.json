@@ -2,6 +2,7 @@
     "java.compile.nullAnalysis.mode": "disabled",
     "java.configuration.updateBuildConfiguration": "automatic",
     "files.encoding": "utf8",
+    "java.debug.settings.vmArgs": "-Dfile.encoding=UTF-8",
     "terminal.integrated.profiles.windows": {
         "PowerShell UTF-8": {
             "source": "PowerShell",
