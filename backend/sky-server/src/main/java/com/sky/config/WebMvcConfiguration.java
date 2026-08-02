@@ -1,6 +1,6 @@
 package com.sky.config;
 
-import com.sky.interceptor.JwtTokenAdminInterceptor;
+import com.sky.interceptor.JwtTokenUserInterceptor;
 import com.sky.json.JacksonObjectMapper;
 
 import java.util.List;
@@ -29,7 +29,7 @@ import springfox.documentation.spring.web.plugins.Docket;
 public class WebMvcConfiguration extends WebMvcConfigurationSupport {
 
     @Autowired
-    private JwtTokenAdminInterceptor jwtTokenAdminInterceptor;
+    private JwtTokenUserInterceptor jwtTokenAdminInterceptor;
 
     /**
      * 注册自定义拦截器
