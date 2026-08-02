@@ -3,7 +3,6 @@ package com.sky.service.impl;
 import java.util.List;
 
 import org.springframework.beans.BeanUtils;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,12 +28,15 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class DishServiceImpl implements DishService {
 
-    @Autowired
-    private DishMapper dishMapper;
-    @Autowired
-    private DishFlavorMapper dishFlavorMapper;
-    @Autowired
-    private SetmealDishMapper setmealDishMapper;
+    private final DishMapper dishMapper;
+    private final DishFlavorMapper dishFlavorMapper;
+    private final SetmealDishMapper setmealDishMapper;
+
+    DishServiceImpl(DishMapper dishMapper, SetmealDishMapper setmealDishMapper) {
+        this.dishMapper = dishMapper;
+        this.dishFlavorMapper = null;
+        this.setmealDishMapper = setmealDishMapper;
+    }
 
     /**
      * 保存菜品及其口味信息
