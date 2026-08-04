@@ -2,7 +2,6 @@ package com.sky.controller.admin;
 
 import java.util.List;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sky.dto.DishDTO;
 import com.sky.dto.DishPageQueryDTO;
+import com.sky.entity.Dish;
 import com.sky.result.PageResult;
 import com.sky.result.Result;
 import com.sky.service.DishService;
@@ -31,8 +31,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class DishController {
 
-    @Autowired
-    private DishService dishService;
+    private final DishService dishService;
+
+    DishController(DishService dishService) {
+        this.dishService = dishService;
+    }
 
     /**
      * 新增菜品
@@ -84,5 +87,17 @@ public class DishController {
         log.info("修改菜品: {}", dishDTO);
         dishService.updateWithFlavor(dishDTO);
         return Result.success();
+    }
+
+    /**
+     * 根据分类id查询菜品
+     * @param categoryId
+     * @return
+    */
+    @GetMapping("/list")
+    @ApiOperation("根据分类id查询菜品")
+    public Result<List<Dish>> list(Long categoryId){
+        List<Dish> list = dishService.list(categoryId);
+        return Result.success(list);
     }
 }
