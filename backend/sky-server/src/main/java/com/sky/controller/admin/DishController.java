@@ -1,7 +1,9 @@
 package com.sky.controller.admin;
 
 import java.util.List;
+import java.util.Set;
 
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,14 +34,16 @@ import lombok.extern.slf4j.Slf4j;
 public class DishController {
 
     private final DishService dishService;
+    private final RedisTemplate<String, Object> redisTemplate;
 
-    DishController(DishService dishService) {
+    DishController(DishService dishService, RedisTemplate<String, Object> redisTemplate) {
         this.dishService = dishService;
+        this.redisTemplate = redisTemplate;
     }
 
     /**
      * 新增菜品
-     * 
+     *
      * @param dishDTO 菜品信息
      * @return 操作结果
      */
@@ -48,12 +52,14 @@ public class DishController {
     public Result save(@RequestBody DishDTO dishDTO) {
         log.info("新增菜品: {}", dishDTO);
         dishService.saveWithFlavor(dishDTO);
+        // 精确已知key，直接删除，无需走KEYS模糊匹配
+        redisTemplate.delete("dish_" + dishDTO.getCategoryId());
         return Result.success();
     }
 
     /**
      * 批量删除菜品
-     * 
+     *
      * @param ids 菜品ID列表
      * @return 操作结果
      */
@@ -62,6 +68,7 @@ public class DishController {
     public Result delete(@RequestParam List<Long> ids) {
         log.info("批量删除菜品: {}", ids);
         dishService.deleteBatch(ids);
+        cleanCache("dish_*");
         return Result.success();
     }
 
@@ -86,6 +93,8 @@ public class DishController {
     public Result update(@RequestBody DishDTO dishDTO) {
         log.info("修改菜品: {}", dishDTO);
         dishService.updateWithFlavor(dishDTO);
+        // 修改可能连分类都改了，无法确定只影响哪一个分类的缓存，直接清空所有菜品缓存
+        cleanCache("dish_*");
         return Result.success();
     }
 
@@ -112,6 +121,19 @@ public class DishController {
     public Result startOrStop(@PathVariable("status") Integer status, Long id) {
         log.info("起售停售菜品: status={}, id={}", status, id);
         dishService.startOrStop(status, id);
+        // 停售还可能联动停售关联的套餐，影响范围不确定，直接清空所有菜品缓存
+        cleanCache("dish_*");
         return Result.success();
+    }
+
+    /**
+     * 清理指定模式的缓存
+     * @param pattern
+     */
+    private void cleanCache(String pattern) {
+        Set<String> keys = redisTemplate.keys(pattern);
+        if (keys != null && !keys.isEmpty()) {
+            redisTemplate.delete(keys);
+        }
     }
 }
