@@ -63,6 +63,12 @@ public interface OrderService {
     void repetition(Long id);
 
     /**
+     * 客户催单
+     * @param id
+     */
+    void reminder(Long id);
+
+    /**
      * 条件搜索订单
      * @param ordersPageQueryDTO
      * @return

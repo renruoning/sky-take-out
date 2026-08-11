@@ -5,6 +5,8 @@ import org.apache.ibatis.annotations.Select;
 
 import com.sky.entity.User;
 
+import java.util.Map;
+
 @Mapper
 public interface UserMapper {
     @Select("select * from user where openid = #{openid}")
@@ -23,4 +25,10 @@ public interface UserMapper {
      */
     @Select("select * from user where id = #{id}")
     User getById(Long id);
+
+    /**
+     * 根据条件统计用户数量
+     * @param map 包含 begin、end（注册时间区间，可选）
+     */
+    Integer countByMap(Map<String, Object> map);
 }
