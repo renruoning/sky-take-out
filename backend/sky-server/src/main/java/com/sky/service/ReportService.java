@@ -47,4 +47,10 @@ public interface ReportService {
      * @param response
      */
     void exportBusinessData(HttpServletResponse response);
+
+    /**
+     * 导出最近30天运营数据Excel报表
+     * @param response
+     */
+    void exportOperatingData(HttpServletResponse response);
 }

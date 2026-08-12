@@ -6,6 +6,8 @@ import com.sky.mapper.OrderDetailMapper;
 import com.sky.mapper.OrderMapper;
 import com.sky.mapper.UserMapper;
 import com.sky.service.ReportService;
+import com.sky.service.WorkspaceService;
+import com.sky.vo.BusinessDataVO;
 import com.sky.vo.OrderReportVO;
 import com.sky.vo.SalesTop10ReportVO;
 import com.sky.vo.TurnoverReportVO;
@@ -35,11 +37,13 @@ public class ReportServiceImpl implements ReportService {
     private final OrderMapper orderMapper;
     private final UserMapper userMapper;
     private final OrderDetailMapper orderDetailMapper;
+    private final WorkspaceService workspaceService;
 
-    ReportServiceImpl(OrderMapper orderMapper, UserMapper userMapper, OrderDetailMapper orderDetailMapper) {
+    ReportServiceImpl(OrderMapper orderMapper, UserMapper userMapper, OrderDetailMapper orderDetailMapper, WorkspaceService workspaceService) {
         this.orderMapper = orderMapper;
         this.userMapper = userMapper;
         this.orderDetailMapper = orderDetailMapper;
+        this.workspaceService = workspaceService;
     }
 
     /**
@@ -250,6 +254,82 @@ public class ReportServiceImpl implements ReportService {
             }
         } catch (IOException e) {
             log.error("导出营业额报表失败：{}", e.getMessage());
+        }
+    }
+
+    /**
+     * 导出最近30天运营数据Excel报表
+     * @param response
+     */
+    public void exportOperatingData(HttpServletResponse response) {
+        LocalDate begin = LocalDate.now().minusDays(30);
+        LocalDate end = LocalDate.now().minusDays(1);
+
+        // 概览数据：整个时间区间
+        BusinessDataVO businessData = workspaceService.getBusinessData(
+                LocalDateTime.of(begin, LocalTime.MIN),
+                LocalDateTime.of(end, LocalTime.MAX));
+
+        List<LocalDate> dateList = new ArrayList<>();
+        for (LocalDate date = begin; !date.isAfter(end); date = date.plusDays(1)) {
+            dateList.add(date);
+        }
+
+        // 每日运营数据
+        List<BusinessDataVO> dailyDataList = dateList.stream()
+                .map(date -> workspaceService.getBusinessData(
+                        LocalDateTime.of(date, LocalTime.MIN),
+                        LocalDateTime.of(date, LocalTime.MAX)))
+                .collect(Collectors.toList());
+
+        try (XSSFWorkbook excel = new XSSFWorkbook()) {
+            Sheet sheet = excel.createSheet("运营数据统计报表");
+
+            Row titleRow = sheet.createRow(0);
+            titleRow.createCell(0).setCellValue("运营数据统计报表：" + begin + " 至 " + end);
+
+            Row overviewHeadRow = sheet.createRow(1);
+            overviewHeadRow.createCell(0).setCellValue("营业额");
+            overviewHeadRow.createCell(1).setCellValue("有效订单数");
+            overviewHeadRow.createCell(2).setCellValue("订单完成率");
+            overviewHeadRow.createCell(3).setCellValue("平均客单价");
+            overviewHeadRow.createCell(4).setCellValue("新增用户数");
+
+            Row overviewDataRow = sheet.createRow(2);
+            overviewDataRow.createCell(0).setCellValue(businessData.getTurnover());
+            overviewDataRow.createCell(1).setCellValue(businessData.getValidOrderCount());
+            overviewDataRow.createCell(2).setCellValue(businessData.getOrderCompletionRate());
+            overviewDataRow.createCell(3).setCellValue(businessData.getUnitPrice());
+            overviewDataRow.createCell(4).setCellValue(businessData.getNewUsers());
+
+            Row detailHeadRow = sheet.createRow(4);
+            detailHeadRow.createCell(0).setCellValue("日期");
+            detailHeadRow.createCell(1).setCellValue("营业额");
+            detailHeadRow.createCell(2).setCellValue("有效订单数");
+            detailHeadRow.createCell(3).setCellValue("订单完成率");
+            detailHeadRow.createCell(4).setCellValue("平均客单价");
+            detailHeadRow.createCell(5).setCellValue("新增用户数");
+
+            for (int i = 0; i < dateList.size(); i++) {
+                BusinessDataVO daily = dailyDataList.get(i);
+                Row row = sheet.createRow(i + 5);
+                row.createCell(0).setCellValue(dateList.get(i).toString());
+                row.createCell(1).setCellValue(daily.getTurnover());
+                row.createCell(2).setCellValue(daily.getValidOrderCount());
+                row.createCell(3).setCellValue(daily.getOrderCompletionRate());
+                row.createCell(4).setCellValue(daily.getUnitPrice());
+                row.createCell(5).setCellValue(daily.getNewUsers());
+            }
+
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            response.setCharacterEncoding("utf-8");
+            response.setHeader("Content-Disposition", "attachment;filename=operatingData.xlsx");
+
+            try (OutputStream out = response.getOutputStream()) {
+                excel.write(out);
+            }
+        } catch (IOException e) {
+            log.error("导出运营数据报表失败：{}", e.getMessage());
         }
     }
 }
