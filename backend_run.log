@@ -1,0 +1,40 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] sky-take-out                                                       [pom]
+[INFO] sky-common                                                         [jar]
+[INFO] sky-pojo                                                           [jar]
+[INFO] sky-server                                                         [jar]
+[INFO] 
+[INFO] ------------------------< com.sky:sky-take-out >------------------------
+[INFO] Building sky-take-out 1.0-SNAPSHOT                                 [1/4]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] >>> spring-boot:2.7.3:run (default-cli) > test-compile @ sky-take-out >>>
+[INFO] 
+[INFO] <<< spring-boot:2.7.3:run (default-cli) < test-compile @ sky-take-out <<<
+[INFO] 
+[INFO] 
+[INFO] --- spring-boot:2.7.3:run (default-cli) @ sky-take-out ---
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for sky-take-out 1.0-SNAPSHOT:
+[INFO] 
+[INFO] sky-take-out ....................................... FAILURE [  1.531 s]
+[INFO] sky-common ......................................... SKIPPED
+[INFO] sky-pojo ........................................... SKIPPED
+[INFO] sky-server ......................................... SKIPPED
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  2.065 s
+[INFO] Finished at: 2026-08-18T17:14:56+10:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.springframework.boot:spring-boot-maven-plugin:2.7.3:run (default-cli) on project sky-take-out: Unable to find a suitable main class, please add a 'mainClass' property -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoExecutionException

@@ -21,6 +21,9 @@ public class Setmeal implements Serializable {
 
     private Long id;
 
+    //所属店铺id
+    private Long shopId;
+
     //分类id
     private Long categoryId;
 

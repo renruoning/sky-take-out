@@ -75,5 +75,7 @@ public class JwtTokenUserInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex)
             throws Exception {
         BaseContext.removeCurrentId();
+        // 用户端token不携带shopId（店铺由每次请求显式传入），此处仅做防御性清理，避免线程池复用时脏数据
+        BaseContext.removeCurrentShopId();
     }
 }

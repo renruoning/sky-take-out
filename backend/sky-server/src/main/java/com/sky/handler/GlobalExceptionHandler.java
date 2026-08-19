@@ -40,4 +40,15 @@ public class GlobalExceptionHandler {
         log.error("异常信息：{}", ex.getMessage());
         return Result.error(MessageConstant.UNKNOWN_ERROR);
     }
+
+    /**
+     * 兜底处理未被上面两个方法捕获的异常，避免异常信息只出现在控制台、请求方拿到一个没有业务含义的默认错误
+     * @param ex
+     * @return
+     */
+    @ExceptionHandler
+    public Result<?> exceptionHandler(Exception ex) {
+        log.error("系统异常：", ex);
+        return Result.error(MessageConstant.UNKNOWN_ERROR);
+    }
 }

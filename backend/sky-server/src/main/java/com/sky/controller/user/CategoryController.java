@@ -24,12 +24,13 @@ public class CategoryController {
     /**
      * 查询分类
      * @param type
+     * @param shopId 店铺id（用户端需显式选择店铺）
      * @return
      */
     @GetMapping("/list")
     @ApiOperation("查询分类")
-    public Result<List<Category>> list(Integer type) {
-        List<Category> list = categoryService.list(type);
+    public Result<List<Category>> list(Integer type, Long shopId) {
+        List<Category> list = categoryService.list(type, shopId);
         return Result.success(list);
     }
 }

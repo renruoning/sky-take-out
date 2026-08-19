@@ -6,6 +6,7 @@
     <select id="pageQuery" resultType="com.sky.entity.Category">
         select * from category
         <where>
+            and shop_id = #{shopId}
             <if test="name != null and name != ''">
                 and name like concat('%',#{name},'%')
             </if>
@@ -38,12 +39,13 @@
                 update_user = #{updateUser}
             </if>
         </set>
-        where id = #{id}
+        where id = #{id} and shop_id = #{shopId}
     </update>
 
     <select id="list" resultType="Category">
         select * from category
         where status = 1
+        and shop_id = #{shopId}
         <if test="type != null">
             and type = #{type}
         </if>

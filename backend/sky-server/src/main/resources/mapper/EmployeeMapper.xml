@@ -8,6 +8,10 @@
         <select id="pageQuery" resultType="com.sky.entity.Employee" parameterType="com.sky.dto.EmployeePageQueryDTO">
             SELECT * FROM employee
             <where>
+                <!-- shopId为null表示平台超管，不限定店铺，可查看所有店铺员工 -->
+                <if test="shopId != null">
+                    AND shop_id = #{shopId}
+                </if>
                 <if test="name != null and name != ''">
                     AND name LIKE CONCAT('%', #{name}, '%')
                 </if>
@@ -15,7 +19,7 @@
             ORDER BY update_time DESC
         </select>
 
-    <!-- update --> 
+    <!-- update -->
 
     <update id="update" parameterType="com.sky.entity.Employee">
         UPDATE employee
@@ -31,5 +35,9 @@
             <if test="updateUser != null">update_user = #{updateUser},</if>
         </set>
         WHERE id = #{id}
+        <!-- shopId为null表示平台超管，不限定店铺 -->
+        <if test="shopId != null">
+            AND shop_id = #{shopId}
+        </if>
     </update>
 </mapper>

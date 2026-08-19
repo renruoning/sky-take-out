@@ -4,6 +4,7 @@ import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
 import com.sky.constant.MessageConstant;
 import com.sky.constant.StatusConstant;
+import com.sky.context.BaseContext;
 import com.sky.dto.SetmealDTO;
 import com.sky.dto.SetmealPageQueryDTO;
 import com.sky.entity.Dish;
@@ -91,6 +92,7 @@ public class SetmealServiceImpl implements SetmealService {
      * @return
     */
     public PageResult pageQuery(SetmealPageQueryDTO setmealPageQueryDTO) {
+        setmealPageQueryDTO.setShopId(BaseContext.getCurrentShopId());
         int pageNum = setmealPageQueryDTO.getPage();
         int pageSize = setmealPageQueryDTO.getPageSize();
 
@@ -105,8 +107,12 @@ public class SetmealServiceImpl implements SetmealService {
     */
     @Transactional
     public void deleteBatch(List<Long> ids) {
+        Long shopId = BaseContext.getCurrentShopId();
         ids.forEach(id -> {
             Setmeal setmeal = setmealMapper.getById(id);
+            if (setmeal == null || !setmeal.getShopId().equals(shopId)) {
+                throw new DeletionNotAllowedException(MessageConstant.SETMEAL_NOT_FOUND);
+            }
             if(StatusConstant.ENABLE == setmeal.getStatus()){
                 //起售中的套餐不能删除
                 throw new DeletionNotAllowedException(MessageConstant.SETMEAL_ON_SALE);
@@ -115,20 +121,23 @@ public class SetmealServiceImpl implements SetmealService {
 
         ids.forEach(setmealId -> {
             //删除套餐表中的数据
-            setmealMapper.deleteById(setmealId);
+            setmealMapper.deleteById(setmealId, shopId);
             //删除套餐菜品关系表中的数据
             setmealDishMapper.deleteBySetmealId(setmealId);
         });
     }
 
     /**
-     * 根据id查询套餐和套餐菜品关系
+     * 根据id查询套餐和套餐菜品关系（校验归属店铺，防止跨店查看）
      *
      * @param id
      * @return
     */
     public SetmealVO getByIdWithDish(Long id) {
         Setmeal setmeal = setmealMapper.getById(id);
+        if (setmeal == null || !setmeal.getShopId().equals(BaseContext.getCurrentShopId())) {
+            return null;
+        }
         List<SetmealDish> setmealDishes = setmealDishMapper.getBySetmealId(id);
 
         SetmealVO setmealVO = new SetmealVO();
@@ -147,6 +156,7 @@ public class SetmealServiceImpl implements SetmealService {
     public void update(SetmealDTO setmealDTO) {
         Setmeal setmeal = new Setmeal();
         BeanUtils.copyProperties(setmealDTO, setmeal);
+        setmeal.setShopId(BaseContext.getCurrentShopId());
 
         //1、修改套餐表，执行update
         setmealMapper.update(setmeal);
@@ -187,6 +197,7 @@ public class SetmealServiceImpl implements SetmealService {
         Setmeal setmeal = Setmeal.builder()
             .id(id)
             .status(status)
+            .shopId(BaseContext.getCurrentShopId())
             .build();
         setmealMapper.update(setmeal);
     }

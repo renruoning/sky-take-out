@@ -5,6 +5,7 @@ import java.util.Map;
 
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import com.github.pagehelper.Page;
@@ -66,11 +67,12 @@ public interface SetmealMapper {
     Setmeal getById(Long id);
 
     /**
-         * 根据id删除套餐
+         * 根据id删除套餐（限定店铺）
          * @param setmealId
+         * @param shopId
     */
-    @Delete("delete from setmeal where id = #{id}")
-    void deleteById(Long setmealId);
+    @Delete("delete from setmeal where id = #{id} and shop_id = #{shopId}")
+    void deleteById(@Param("id") Long setmealId, @Param("shopId") Long shopId);
 
     /**
      * 根据id修改套餐

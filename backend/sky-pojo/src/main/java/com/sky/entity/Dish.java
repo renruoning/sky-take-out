@@ -21,6 +21,9 @@ public class Dish implements Serializable {
 
     private Long id;
 
+    //所属店铺id
+    private Long shopId;
+
     //菜品名称
     private String name;
 

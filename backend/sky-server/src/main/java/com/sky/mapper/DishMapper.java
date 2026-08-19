@@ -5,6 +5,7 @@ import java.util.Map;
 
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import com.github.pagehelper.Page;
@@ -17,8 +18,9 @@ import com.sky.vo.DishVO;
 @Mapper
 public interface DishMapper {
     /**
-     * 根据id查询菜品信息
-     * 
+     * 根据id查询菜品信息（不限定店铺：供购物车/订单等按主键直接取详情的内部场景使用；
+     * 管理端“根据ID查询菜品”接口在Service层额外校验了shopId归属，见DishServiceImpl.getByIdWithFlavor）
+     *
      * @param id 菜品id
      * @return 菜品信息
      */
@@ -27,7 +29,7 @@ public interface DishMapper {
 
     /**
      * 根据id删除单个菜品信息
-     * 
+     *
      * @param id 菜品id
      */
     @Delete("delete from dish where id = #{id}")
@@ -59,11 +61,12 @@ public interface DishMapper {
     Page<DishVO> pageQuery(DishPageQueryDTO dishPageQueryDTO);
 
     /**
-     * 根据id批量删除菜品信息
-     * 
+     * 根据id批量删除菜品信息（限定店铺）
+     *
      * @param ids 菜品id列表
+     * @param shopId 所属店铺id
      */
-    void deleteByIds(List<Long> ids);
+    void deleteByIds(@Param("ids") List<Long> ids, @Param("shopId") Long shopId);
 
     /**
      * 更新菜品信息

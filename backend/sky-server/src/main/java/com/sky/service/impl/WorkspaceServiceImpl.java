@@ -1,6 +1,7 @@
 package com.sky.service.impl;
 
 import com.sky.constant.StatusConstant;
+import com.sky.context.BaseContext;
 import com.sky.entity.Orders;
 import com.sky.mapper.DishMapper;
 import com.sky.mapper.OrderMapper;
@@ -47,7 +48,9 @@ public class WorkspaceServiceImpl implements WorkspaceService {
          * 新增用户：当日新增用户的数量
          */
 
+        Long shopId = BaseContext.getCurrentShopId();
         Map map = new HashMap();
+        map.put("shopId", shopId);
         map.put("begin",begin);
         map.put("end",end);
 
@@ -92,6 +95,7 @@ public class WorkspaceServiceImpl implements WorkspaceService {
      */
     public OrderOverViewVO getOrderOverView() {
         Map map = new HashMap();
+        map.put("shopId", BaseContext.getCurrentShopId());
         map.put("begin", LocalDateTime.now().with(LocalTime.MIN));
         map.put("status", Orders.TO_BE_CONFIRMED);
 
@@ -130,6 +134,7 @@ public class WorkspaceServiceImpl implements WorkspaceService {
      */
     public DishOverViewVO getDishOverView() {
         Map map = new HashMap();
+        map.put("shopId", BaseContext.getCurrentShopId());
         map.put("status", StatusConstant.ENABLE);
         Integer sold = dishMapper.countByMap(map);
 
@@ -149,6 +154,7 @@ public class WorkspaceServiceImpl implements WorkspaceService {
      */
     public SetmealOverViewVO getSetmealOverView() {
         Map map = new HashMap();
+        map.put("shopId", BaseContext.getCurrentShopId());
         map.put("status", StatusConstant.ENABLE);
         Integer sold = setmealMapper.countByMap(map);
 

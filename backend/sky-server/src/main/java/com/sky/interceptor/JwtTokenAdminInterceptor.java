@@ -53,6 +53,12 @@ public class JwtTokenAdminInterceptor implements HandlerInterceptor {
             Long empId = Long.valueOf(claims.get(JwtClaimsConstant.EMP_ID).toString());
             log.info("当前员工id：", empId);
             BaseContext.setCurrentId(empId);
+
+            // 店铺id：不存在该claim表示平台超管，不设置（保持为null）
+            Object shopIdClaim = claims.get(JwtClaimsConstant.SHOP_ID);
+            if (shopIdClaim != null) {
+                BaseContext.setCurrentShopId(Long.valueOf(shopIdClaim.toString()));
+            }
             // 3、通过，放行
             return true;
         } catch (Exception ex) {
@@ -75,5 +81,6 @@ public class JwtTokenAdminInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex)
             throws Exception {
         BaseContext.removeCurrentId();
+        BaseContext.removeCurrentShopId();
     }
 }

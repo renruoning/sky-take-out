@@ -1,10 +1,14 @@
 package com.sky.mapper;
 
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import com.sky.dto.DailyUserStatDTO;
 import com.sky.entity.User;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 @Mapper
@@ -31,4 +35,11 @@ public interface UserMapper {
      * @param map 包含 begin、end（注册时间区间，可选）
      */
     Integer countByMap(Map<String, Object> map);
+
+    /**
+     * 按天分组统计时间区间内每天的新增用户数，一次查询代替按天循环查询
+     * @param begin
+     * @param end
+     */
+    List<DailyUserStatDTO> countGroupByDate(@Param("begin") LocalDateTime begin, @Param("end") LocalDateTime end);
 }

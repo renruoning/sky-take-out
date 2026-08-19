@@ -43,7 +43,8 @@ public interface CategoryService {
     /**
      * 根据类型查询分类
      * @param type
+     * @param shopId 所属店铺id（管理端取当前登录员工所属店铺，用户端由前端显式传入）
      * @return
      */
-    List<Category> list(Integer type);
+    List<Category> list(Integer type, Long shopId);
 }

@@ -4,15 +4,16 @@
 <mapper namespace="com.sky.mapper.DishMapper">
 
     <insert id="insert" parameterType="com.sky.entity.Dish" useGeneratedKeys="true" keyProperty="id">
-        insert into dish (name, category_id, price, image, description, status, create_time, update_time, create_user, update_user)
-        values (#{name}, #{categoryId}, #{price}, #{image}, #{description}, #{status}, #{createTime}, #{updateTime}, #{createUser}, #{updateUser})
+        insert into dish (shop_id, name, category_id, price, image, description, status, create_time, update_time, create_user, update_user)
+        values (#{shopId}, #{name}, #{categoryId}, #{price}, #{image}, #{description}, #{status}, #{createTime}, #{updateTime}, #{createUser}, #{updateUser})
     </insert>
 
-    <!-- pageQuery --> 
+    <!-- pageQuery -->
 
     <select id="pageQuery" resultType = "com.sky.vo.DishVO">
         select d.*, c.name as categoryName from dish d left join category c on d.category_id = c.id
         <where>
+            and d.shop_id = #{shopId}
             <if test="name != null and name != ''">
                 and d.name like concat('%', #{name}, '%')
             </if>
@@ -22,23 +23,23 @@
             <if test="status != null">
                 and d.status = #{status}
             </if>
-        </where> 
+        </where>
         order by d.update_time desc
     </select>
 
-    <!-- deleteByIds --> 
+    <!-- deleteByIds -->
 
     <delete id="deleteByIds">
-        delete from dish where id in
+        delete from dish where shop_id = #{shopId} and id in
         <foreach collection="ids" item="id" open="(" separator="," close=")">
             #{id}
         </foreach>
     </delete>
 
-    <!-- update --> 
+    <!-- update -->
 
     <update id="update">
-        update dish 
+        update dish
         <set>
             <if test="name != null"> name = #{name}, </if>
             <if test="categoryId != null"> category_id = #{categoryId}, </if>
@@ -49,12 +50,13 @@
             <if test="updateTime != null"> update_time = #{updateTime}, </if>
             <if test="updateUser != null"> update_user = #{updateUser}, </if>
         </set>
-        where id = #{id}
+        where id = #{id} and shop_id = #{shopId}
     </update>
 
     <select id="list" resultType="Dish" parameterType="Dish">
         select * from dish
         <where>
+            and shop_id = #{shopId}
             <if test="name != null">
                 and name like concat('%',#{name},'%')
             </if>
@@ -71,6 +73,9 @@
     <select id="countByMap" resultType="java.lang.Integer">
         select count(id) from dish
         <where>
+            <if test="shopId != null">
+                and shop_id = #{shopId}
+            </if>
             <if test="status != null">
                 and status = #{status}
             </if>

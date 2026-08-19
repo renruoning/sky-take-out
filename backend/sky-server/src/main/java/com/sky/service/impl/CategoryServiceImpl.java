@@ -4,6 +4,7 @@ import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
 import com.sky.constant.MessageConstant;
 import com.sky.constant.StatusConstant;
+import com.sky.context.BaseContext;
 import com.sky.dto.CategoryDTO;
 import com.sky.dto.CategoryPageQueryDTO;
 import com.sky.entity.Category;
@@ -58,6 +59,7 @@ public class CategoryServiceImpl implements CategoryService {
      * @return
      */
     public PageResult pageQuery(CategoryPageQueryDTO categoryPageQueryDTO) {
+        categoryPageQueryDTO.setShopId(BaseContext.getCurrentShopId());
         PageHelper.startPage(categoryPageQueryDTO.getPage(), categoryPageQueryDTO.getPageSize());
         // 下一条sql进行分页，自动加入limit关键字分页
         Page<Category> page = categoryMapper.pageQuery(categoryPageQueryDTO);
@@ -85,24 +87,25 @@ public class CategoryServiceImpl implements CategoryService {
         }
 
         // 删除分类数据
-        categoryMapper.deleteById(id);
+        categoryMapper.deleteById(id, BaseContext.getCurrentShopId());
     }
 
     /**
      * 修改分类
-     * 
+     *
      * @param categoryDTO
      */
     public void update(CategoryDTO categoryDTO) {
         Category category = new Category();
         BeanUtils.copyProperties(categoryDTO, category);
+        category.setShopId(BaseContext.getCurrentShopId());
 
         categoryMapper.update(category);
     }
 
     /**
      * 启用、禁用分类
-     * 
+     *
      * @param status
      * @param id
      */
@@ -110,17 +113,18 @@ public class CategoryServiceImpl implements CategoryService {
         Category category = Category.builder()
                 .id(id)
                 .status(status)
+                .shopId(BaseContext.getCurrentShopId())
                 .build();
         categoryMapper.update(category);
     }
 
     /**
      * 根据类型查询分类
-     * 
+     *
      * @param type
      * @return
      */
-    public List<Category> list(Integer type) {
-        return categoryMapper.list(type);
+    public List<Category> list(Integer type, Long shopId) {
+        return categoryMapper.list(type, shopId);
     }
 }

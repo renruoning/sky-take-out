@@ -34,5 +34,6 @@ public interface OrderDetailMapper {
      */
     List<GoodsSalesDTO> getSalesTop10(@Param("status") Integer status,
                                        @Param("begin") LocalDateTime begin,
-                                       @Param("end") LocalDateTime end);
+                                       @Param("end") LocalDateTime end,
+                                       @Param("shopId") Long shopId);
 }

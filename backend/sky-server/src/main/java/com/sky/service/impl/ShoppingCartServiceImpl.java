@@ -6,11 +6,13 @@ import java.util.List;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 
+import com.sky.constant.MessageConstant;
 import com.sky.context.BaseContext;
 import com.sky.dto.ShoppingCartDTO;
 import com.sky.entity.Dish;
 import com.sky.entity.Setmeal;
 import com.sky.entity.ShoppingCart;
+import com.sky.exception.ShoppingCartBusinessException;
 import com.sky.mapper.DishMapper;
 import com.sky.mapper.SetmealMapper;
 import com.sky.mapper.ShoppingCartMapper;
@@ -36,7 +38,15 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
     public void addShoppingCart(ShoppingCartDTO shoppingCartDTO) {
         ShoppingCart shoppingCart = new ShoppingCart();
         BeanUtils.copyProperties(shoppingCartDTO, shoppingCart);
-        shoppingCart.setUserId(BaseContext.getCurrentId());
+        Long userId = BaseContext.getCurrentId();
+        shoppingCart.setUserId(userId);
+
+        // 购物车不能同时装多个店铺的商品：若购物车非空且已有商品属于其他店铺，提示先清空
+        List<ShoppingCart> existingCart = shoppingCartMapper.list(ShoppingCart.builder().userId(userId).build());
+        if (existingCart != null && !existingCart.isEmpty()
+                && !existingCart.get(0).getShopId().equals(shoppingCartDTO.getShopId())) {
+            throw new ShoppingCartBusinessException(MessageConstant.SHOPPING_CART_SHOP_CONFLICT);
+        }
 
         // 判断该商品（同一菜品/套餐+同一口味）是否已经在购物车中
         List<ShoppingCart> list = shoppingCartMapper.list(shoppingCart);

@@ -1,5 +1,6 @@
 package com.sky.controller.admin;
 
+import com.sky.context.BaseContext;
 import com.sky.dto.CategoryDTO;
 import com.sky.dto.CategoryPageQueryDTO;
 import com.sky.entity.Category;
@@ -99,7 +100,7 @@ public class CategoryController {
     @GetMapping("/list")
     @ApiOperation("根据类型查询分类")
     public Result<List<Category>> list(Integer type){
-        List<Category> list = categoryService.list(type);
+        List<Category> list = categoryService.list(type, BaseContext.getCurrentShopId());
         return Result.success(list);
     }
 }

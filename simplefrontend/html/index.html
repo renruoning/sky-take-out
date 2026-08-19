@@ -1,0 +1,1513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Sky Take Out - API 测试台</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1c2438; --border:#2a3450;
+    --text:#e6e9f0; --muted:#8b93a7; --accent:#4f8cff; --accent2:#3a6fd8;
+    --get:#3fb950; --post:#4f8cff; --put:#d29922; --delete:#f85149;
+    --ok:#3fb950; --err:#f85149;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:Consolas,"Segoe UI",-apple-system,sans-serif;font-size:14px;}
+  #app{display:flex;height:100vh;}
+
+  /* sidebar */
+  #sidebar{width:300px;flex:none;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+  #sidebar h1{font-size:15px;margin:0;padding:14px 14px 10px;border-bottom:1px solid var(--border);}
+  #sidebar h1 span{color:var(--muted);font-weight:normal;font-size:12px;display:block;margin-top:2px;}
+  #search{margin:10px 12px;padding:8px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);width:calc(100% - 24px);}
+  #search:focus{outline:none;border-color:var(--accent);}
+  #nav{flex:1;overflow-y:auto;padding:0 6px 12px;}
+  .group-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding:12px 8px 4px;}
+  .ctrl-title{font-size:12px;color:#aab4cc;padding:6px 8px 2px;font-weight:600;}
+  .ep-btn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;border:none;color:var(--text);padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px;}
+  .ep-btn:hover{background:var(--panel2);}
+  .ep-btn.active{background:var(--accent);color:#fff;}
+  .m-badge{flex:none;font-size:10px;font-weight:700;padding:2px 5px;border-radius:4px;color:#08101f;min-width:38px;text-align:center;}
+  .m-GET{background:var(--get);} .m-POST{background:var(--accent);color:#fff;} .m-PUT{background:var(--put);} .m-DELETE{background:var(--delete);color:#fff;}
+  .ep-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* main */
+  #main{flex:1;display:flex;flex-direction:column;min-width:0;}
+  #topbar{display:flex;align-items:center;gap:18px;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap;}
+  #topbar .field{display:flex;align-items:center;gap:6px;}
+  #topbar label{color:var(--muted);font-size:12px;}
+  #topbar input{background:var(--panel2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-family:inherit;font-size:12px;width:230px;}
+  #topbar input:focus{outline:none;border-color:var(--accent);}
+
+  #content{flex:1;overflow-y:auto;padding:20px;}
+  #empty{color:var(--muted);text-align:center;margin-top:80px;font-size:14px;}
+
+  #detail{max-width:980px;}
+  #ep-header{display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap;}
+  #ep-header .m-badge{font-size:12px;padding:4px 8px;}
+  #ep-path{font-family:Consolas,monospace;font-size:15px;color:#dfe6f5;}
+  #ep-name{font-size:18px;font-weight:600;margin:2px 0 10px;}
+  .auth-badge{font-size:11px;padding:2px 7px;border-radius:10px;border:1px solid var(--border);color:var(--muted);}
+  .auth-admin{border-color:#d29922;color:#d29922;}
+  .auth-user{border-color:#4f8cff;color:#4f8cff;}
+  .auth-none{border-color:#3fb950;color:#3fb950;}
+
+  #note{background:#2a2313;border:1px solid #5c4a12;color:#e6c760;padding:8px 12px;border-radius:6px;font-size:12.5px;margin-bottom:14px;line-height:1.5;}
+
+  #pathParams{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+  #pathParams .pp{display:flex;flex-direction:column;gap:4px;}
+  #pathParams label{font-size:11px;color:var(--muted);}
+  #pathParams input{background:var(--panel2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:6px 9px;font-family:Consolas,monospace;width:140px;}
+
+  .panel-label{font-size:12px;color:var(--muted);margin:14px 0 6px;display:flex;justify-content:space-between;align-items:center;}
+  textarea{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:12px;font-family:Consolas,"Courier New",monospace;font-size:13px;resize:vertical;line-height:1.5;}
+  #reqBody{height:220px;}
+  #resBody{height:280px;color:#c9d6f0;}
+  #reqBody:focus,#resBody:focus{outline:none;border-color:var(--accent);}
+
+  #fileRow{margin:10px 0;}
+  #fileRow input[type=file]{color:var(--text);}
+
+  #sendBtn{margin-top:14px;background:var(--accent);color:#fff;border:none;padding:10px 26px;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer;}
+  #sendBtn:hover{background:var(--accent2);}
+  #sendBtn:disabled{opacity:.5;cursor:default;}
+  #status{margin-left:14px;font-size:13px;font-weight:600;}
+  .status-ok{color:var(--ok);} .status-err{color:var(--err);}
+
+  ::-webkit-scrollbar{width:10px;height:10px;}
+  ::-webkit-scrollbar-thumb{background:#2f3a58;border-radius:6px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h1>Sky Take Out<span>后端接口测试台 · <span id="epCount">0</span> 个接口</span></h1>
+    <input id="search" placeholder="搜索接口名 / 路径...">
+    <div id="nav"></div>
+  </div>
+
+  <div id="main">
+    <div id="topbar">
+      <div class="field">
+        <label>管理端 token</label>
+        <input id="adminToken" placeholder="登录后自动填入，或手动粘贴">
+      </div>
+      <div class="field">
+        <label>用户端 token</label>
+        <input id="userToken" placeholder="登录后自动填入，或手动粘贴">
+      </div>
+    </div>
+
+    <div id="content">
+      <div id="empty">从左侧选择一个接口开始测试</div>
+      <div id="detail" style="display:none;">
+        <div id="ep-header">
+          <span id="ep-method" class="m-badge"></span>
+          <span id="ep-path"></span>
+          <span id="ep-auth" class="auth-badge"></span>
+        </div>
+        <div id="ep-name"></div>
+        <div id="note" style="display:none;"></div>
+
+        <div id="pathParams"></div>
+
+        <div id="fileRow" style="display:none;">
+          <label style="color:var(--muted);font-size:12px;">选择要上传的文件：</label><br>
+          <input type="file" id="fileInput">
+        </div>
+
+        <div id="bodyPanel">
+          <div class="panel-label">
+            <span id="bodyLabel">请求参数（JSON）</span>
+          </div>
+          <textarea id="reqBody" spellcheck="false"></textarea>
+        </div>
+
+        <button id="sendBtn">发送 ▶</button>
+        <span id="status"></span>
+
+        <div class="panel-label" style="margin-top:20px;">返回值</div>
+        <textarea id="resBody" readonly spellcheck="false" placeholder="点击「发送」查看返回结果..."></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_SPEC = [
+  {
+    "group": "admin",
+    "controllerLabel": "分类管理",
+    "name": "新增分类",
+    "method": "POST",
+    "path": "/admin/category",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "type": 1,
+      "name": "川菜",
+      "sort": 1
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "分类管理",
+    "name": "分类分页查询",
+    "method": "GET",
+    "path": "/admin/category/page",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "page": 1,
+      "pageSize": 10,
+      "name": "",
+      "type": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "分类管理",
+    "name": "删除分类",
+    "method": "DELETE",
+    "path": "/admin/category",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "分类管理",
+    "name": "修改分类",
+    "method": "PUT",
+    "path": "/admin/category",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1,
+      "type": 1,
+      "name": "川菜",
+      "sort": 1
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "分类管理",
+    "name": "启用禁用分类",
+    "method": "POST",
+    "path": "/admin/category/status/{status}",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1
+    },
+    "pathParams": [
+      "status"
+    ],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "分类管理",
+    "name": "根据类型查询分类",
+    "method": "GET",
+    "path": "/admin/category/list",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "type": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "公共接口",
+    "name": "文件上传",
+    "method": "POST",
+    "path": "/admin/common/upload",
+    "auth": "admin",
+    "bodyType": "multipart",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "note": "multipart/form-data，字段名 file，上传一张图片，不是JSON请求体",
+    "paramMode": "multipart"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "菜品管理",
+    "name": "新增菜品",
+    "method": "POST",
+    "path": "/admin/dish",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "name": "宫保鸡丁",
+      "categoryId": 1,
+      "price": 28,
+      "image": "https://example.com/dish.jpg",
+      "description": "经典川菜",
+      "status": 1,
+      "flavors": [
+        {
+          "name": "口味",
+          "value": "[\"不辣\",\"微辣\",\"中辣\",\"重辣\"]"
+        }
+      ]
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "菜品管理",
+    "name": "批量删除菜品",
+    "method": "DELETE",
+    "path": "/admin/dish",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "ids": [
+        1,
+        2,
+        3
+      ]
+    },
+    "pathParams": [],
+    "note": "实际通过查询参数 ids 传递（@RequestParam List<Long> ids），此处以JSON对象形式展示供参考，调用时会被序列化为查询字符串",
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "菜品管理",
+    "name": "菜品分页查询",
+    "method": "GET",
+    "path": "/admin/dish/page",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "page": 1,
+      "pageSize": 10,
+      "name": "",
+      "categoryId": 1,
+      "status": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "菜品管理",
+    "name": "根据ID查询菜品",
+    "method": "GET",
+    "path": "/admin/dish/{id}",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "菜品管理",
+    "name": "修改菜品",
+    "method": "PUT",
+    "path": "/admin/dish",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1,
+      "name": "宫保鸡丁",
+      "categoryId": 1,
+      "price": 28,
+      "image": "https://example.com/dish.jpg",
+      "description": "经典川菜",
+      "status": 1,
+      "flavors": [
+        {
+          "name": "口味",
+          "value": "[\"不辣\",\"微辣\",\"中辣\",\"重辣\"]"
+        }
+      ]
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "菜品管理",
+    "name": "根据分类id查询菜品",
+    "method": "GET",
+    "path": "/admin/dish/list",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "categoryId": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "菜品管理",
+    "name": "起售停售菜品",
+    "method": "POST",
+    "path": "/admin/dish/status/{status}",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1
+    },
+    "pathParams": [
+      "status"
+    ],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "员工管理",
+    "name": "员工登录接口",
+    "method": "POST",
+    "path": "/admin/employee/login",
+    "auth": "none",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "username": "admin",
+      "password": "123456"
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "员工管理",
+    "name": "员工退出接口",
+    "method": "POST",
+    "path": "/admin/employee/logout",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "员工管理",
+    "name": "新增员工接口",
+    "method": "POST",
+    "path": "/admin/employee",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "username": "zhangsan",
+      "name": "张三",
+      "phone": "13812345678",
+      "sex": "1",
+      "idNumber": "110101199001011234"
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "员工管理",
+    "name": "员工分页查询接口",
+    "method": "GET",
+    "path": "/admin/employee/page",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "name": "",
+      "page": 1,
+      "pageSize": 10
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "员工管理",
+    "name": "启用或禁用员工账号",
+    "method": "POST",
+    "path": "/admin/employee/status/{status}",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1
+    },
+    "pathParams": [
+      "status"
+    ],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "员工管理",
+    "name": "根据id查询员工信息",
+    "method": "GET",
+    "path": "/admin/employee/{id}",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "员工管理",
+    "name": "编辑员工信息",
+    "method": "PUT",
+    "path": "/admin/employee",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1,
+      "username": "zhangsan",
+      "name": "张三",
+      "phone": "13812345678",
+      "sex": "1",
+      "idNumber": "110101199001011234"
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "套餐管理",
+    "name": "新增套餐",
+    "method": "POST",
+    "path": "/admin/setmeal",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "categoryId": 2,
+      "name": "商务套餐A",
+      "price": 58,
+      "status": 0,
+      "description": "超值套餐",
+      "image": "https://example.com/setmeal.jpg",
+      "setmealDishes": [
+        {
+          "dishId": 1,
+          "name": "宫保鸡丁",
+          "price": 28,
+          "copies": 1
+        }
+      ]
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "套餐管理",
+    "name": "分页查询",
+    "method": "GET",
+    "path": "/admin/setmeal/page",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "page": 1,
+      "pageSize": 10,
+      "name": "",
+      "categoryId": 2,
+      "status": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "套餐管理",
+    "name": "批量删除套餐",
+    "method": "DELETE",
+    "path": "/admin/setmeal",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "ids": [
+        1,
+        2,
+        3
+      ]
+    },
+    "pathParams": [],
+    "note": "实际通过查询参数 ids 传递（@RequestParam List<Long> ids）",
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "套餐管理",
+    "name": "根据id查询套餐",
+    "method": "GET",
+    "path": "/admin/setmeal/{id}",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "套餐管理",
+    "name": "修改套餐",
+    "method": "PUT",
+    "path": "/admin/setmeal",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1,
+      "categoryId": 2,
+      "name": "商务套餐A",
+      "price": 58,
+      "status": 0,
+      "description": "超值套餐",
+      "image": "https://example.com/setmeal.jpg",
+      "setmealDishes": [
+        {
+          "dishId": 1,
+          "name": "宫保鸡丁",
+          "price": 28,
+          "copies": 1
+        }
+      ]
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "套餐管理",
+    "name": "套餐起售停售",
+    "method": "POST",
+    "path": "/admin/setmeal/status/{status}",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1
+    },
+    "pathParams": [
+      "status"
+    ],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "店铺",
+    "name": "设置店铺的营业状态",
+    "method": "PUT",
+    "path": "/admin/shop/{status}",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "status"
+    ],
+    "note": "status路径参数：1营业中 0打烊中",
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "店铺",
+    "name": "获取店铺的营业状态",
+    "method": "GET",
+    "path": "/admin/shop/status",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "订单管理",
+    "name": "订单搜索",
+    "method": "GET",
+    "path": "/admin/order/conditionSearch",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "page": 1,
+      "pageSize": 10,
+      "number": "",
+      "phone": "",
+      "status": 2,
+      "beginTime": "2026-08-01 00:00:00",
+      "endTime": "2026-08-18 23:59:59",
+      "userId": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "订单管理",
+    "name": "各个状态的订单数量统计",
+    "method": "GET",
+    "path": "/admin/order/statistics",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "订单管理",
+    "name": "查询订单详情",
+    "method": "GET",
+    "path": "/admin/order/details/{id}",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "订单管理",
+    "name": "接单",
+    "method": "PUT",
+    "path": "/admin/order/confirm",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1,
+      "status": 3
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "订单管理",
+    "name": "拒单",
+    "method": "PUT",
+    "path": "/admin/order/rejection",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1,
+      "rejectionReason": "菜品已售罄"
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "订单管理",
+    "name": "取消订单",
+    "method": "PUT",
+    "path": "/admin/order/cancel",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1,
+      "cancelReason": "用户申请退款"
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "订单管理",
+    "name": "派送订单",
+    "method": "PUT",
+    "path": "/admin/order/delivery/{id}",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "订单管理",
+    "name": "完成订单",
+    "method": "PUT",
+    "path": "/admin/order/complete/{id}",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "报表",
+    "name": "营业额统计",
+    "method": "GET",
+    "path": "/admin/report/turnoverStatistics",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "begin": "2026-08-01",
+      "end": "2026-08-18"
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "报表",
+    "name": "用户统计",
+    "method": "GET",
+    "path": "/admin/report/userStatistics",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "begin": "2026-08-01",
+      "end": "2026-08-18"
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "报表",
+    "name": "订单统计",
+    "method": "GET",
+    "path": "/admin/report/ordersStatistics",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "begin": "2026-08-01",
+      "end": "2026-08-18"
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "报表",
+    "name": "销量排名top10统计",
+    "method": "GET",
+    "path": "/admin/report/top10",
+    "auth": "admin",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "begin": "2026-08-01",
+      "end": "2026-08-18"
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "报表",
+    "name": "导出营业额数据Excel报表",
+    "method": "GET",
+    "path": "/admin/report/export",
+    "auth": "admin",
+    "bodyType": "binary-response",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "note": "返回二进制Excel文件流，不是JSON响应",
+    "paramMode": "none"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "工作台",
+    "name": "工作台今日数据查询",
+    "method": "GET",
+    "path": "/admin/workspace/businessData",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "工作台",
+    "name": "查询订单管理数据",
+    "method": "GET",
+    "path": "/admin/workspace/overviewOrders",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "工作台",
+    "name": "查询菜品总览",
+    "method": "GET",
+    "path": "/admin/workspace/overviewDishes",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "工作台",
+    "name": "查询套餐总览",
+    "method": "GET",
+    "path": "/admin/workspace/overviewSetmeals",
+    "auth": "admin",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "admin",
+    "controllerLabel": "导出",
+    "name": "导出最近30天运营数据Excel报表",
+    "method": "GET",
+    "path": "/admin/export/export",
+    "auth": "admin",
+    "bodyType": "binary-response",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "note": "返回二进制Excel文件流，不是JSON响应",
+    "paramMode": "none"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "地址簿",
+    "name": "查询当前登录用户的所有地址信息",
+    "method": "GET",
+    "path": "/user/addressBook/list",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "地址簿",
+    "name": "新增地址",
+    "method": "POST",
+    "path": "/user/addressBook",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "consignee": "李四",
+      "phone": "13900001111",
+      "sex": "1",
+      "provinceCode": "110000",
+      "provinceName": "北京市",
+      "cityCode": "110100",
+      "cityName": "北京市",
+      "districtCode": "110105",
+      "districtName": "朝阳区",
+      "detail": "某某街道1号院",
+      "label": "家",
+      "isDefault": 0
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "地址簿",
+    "name": "根据id查询地址",
+    "method": "GET",
+    "path": "/user/addressBook/{id}",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "地址簿",
+    "name": "根据id修改地址",
+    "method": "PUT",
+    "path": "/user/addressBook",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1,
+      "consignee": "李四",
+      "phone": "13900001111",
+      "sex": "1",
+      "provinceCode": "110000",
+      "provinceName": "北京市",
+      "cityCode": "110100",
+      "cityName": "北京市",
+      "districtCode": "110105",
+      "districtName": "朝阳区",
+      "detail": "某某街道1号院",
+      "label": "家",
+      "isDefault": 0
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "地址簿",
+    "name": "设置默认地址",
+    "method": "PUT",
+    "path": "/user/addressBook/default",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "地址簿",
+    "name": "根据id删除地址",
+    "method": "DELETE",
+    "path": "/user/addressBook",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": 1
+    },
+    "pathParams": [],
+    "note": "实际通过查询参数 id 传递（无@RequestBody），JSON对象仅供参考",
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "地址簿",
+    "name": "查询默认地址",
+    "method": "GET",
+    "path": "/user/addressBook/default",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "分类",
+    "name": "查询分类",
+    "method": "GET",
+    "path": "/user/category/list",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "type": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "菜品浏览",
+    "name": "根据分类id查询菜品",
+    "method": "GET",
+    "path": "/user/dish/list",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "categoryId": 1
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "套餐浏览",
+    "name": "根据分类id查询套餐",
+    "method": "GET",
+    "path": "/user/setmeal/list",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "categoryId": 2
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "套餐浏览",
+    "name": "根据套餐id查询包含的菜品列表",
+    "method": "GET",
+    "path": "/user/setmeal/dish/{id}",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "店铺",
+    "name": "获取店铺的营业状态",
+    "method": "GET",
+    "path": "/user/shop/status",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "购物车",
+    "name": "添加购物车",
+    "method": "POST",
+    "path": "/user/shoppingCart/add",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "dishId": 1,
+      "setmealId": null,
+      "dishFlavor": "中辣"
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "购物车",
+    "name": "查看购物车",
+    "method": "GET",
+    "path": "/user/shoppingCart/list",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "购物车",
+    "name": "删除/减少购物车中的一个商品",
+    "method": "POST",
+    "path": "/user/shoppingCart/sub",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "dishId": 1,
+      "setmealId": null,
+      "dishFlavor": "中辣"
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "购物车",
+    "name": "清空购物车",
+    "method": "DELETE",
+    "path": "/user/shoppingCart/clean",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [],
+    "paramMode": "none"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "C端用户",
+    "name": "微信登录",
+    "method": "POST",
+    "path": "/user/user/login",
+    "auth": "none",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "code": "0a1b2c3d4e5f6g7h8i9j"
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "订单管理",
+    "name": "用户下单",
+    "method": "POST",
+    "path": "/user/order/submit",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "addressBookId": 1,
+      "payMethod": 1,
+      "remark": "不要辣",
+      "estimatedDeliveryTime": "2026-08-18 19:30:00",
+      "deliveryStatus": 1,
+      "tablewareNumber": 2,
+      "tablewareStatus": 1,
+      "packAmount": 2,
+      "amount": 58
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "订单管理",
+    "name": "订单支付",
+    "method": "PUT",
+    "path": "/user/order/payment",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "orderNumber": "202608180001",
+      "payMethod": 1
+    },
+    "pathParams": [],
+    "paramMode": "requestBody"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "订单管理",
+    "name": "历史订单查询",
+    "method": "GET",
+    "path": "/user/order/historyOrders",
+    "auth": "user",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "page": 1,
+      "pageSize": 10,
+      "status": 5
+    },
+    "pathParams": [],
+    "paramMode": "queryParams"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "订单管理",
+    "name": "查询订单详情",
+    "method": "GET",
+    "path": "/user/order/orderDetail/{id}",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "订单管理",
+    "name": "取消订单",
+    "method": "PUT",
+    "path": "/user/order/cancel/{id}",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "订单管理",
+    "name": "再来一单",
+    "method": "POST",
+    "path": "/user/order/repetition/{id}",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "user",
+    "controllerLabel": "订单管理",
+    "name": "客户催单",
+    "method": "GET",
+    "path": "/user/order/reminder/{id}",
+    "auth": "user",
+    "bodyType": "none",
+    "bodyTemplate": null,
+    "pathParams": [
+      "id"
+    ],
+    "paramMode": "pathOnly"
+  },
+  {
+    "group": "notify",
+    "controllerLabel": "支付回调",
+    "name": "支付成功回调",
+    "method": "POST",
+    "path": "/notify/paySuccess",
+    "auth": "none",
+    "bodyType": "json",
+    "bodyTemplate": {
+      "id": "EV-2026081800001",
+      "resource": {
+        "algorithm": "AEAD_AES_256_GCM",
+        "ciphertext": "base64密文（由微信支付平台生成，无法手动构造有效值）",
+        "nonce": "随机串",
+        "associated_data": "transaction"
+      }
+    },
+    "pathParams": [],
+    "note": "微信支付平台服务端回调接口，非人工测试接口。请求体是微信支付加密的通知报文，需要用商户APIv3密钥解密，手动构造的JSON无法通过解密校验，仅供了解结构，不建议在测试页面上实际调用 该接口未使用@RequestBody注解，而是手动通过request.getReader()读取原始请求体并按JSON解析（微信支付回调报文），效果上等同于JSON请求体，故paramMode标记为requestBody。",
+    "paramMode": "requestBody"
+  }
+]
+;
+
+const GROUP_LABEL = { admin: "管理端 /admin", user: "用户端 /user", notify: "回调 /notify" };
+
+let current = null;
+
+const navEl = document.getElementById('nav');
+const searchEl = document.getElementById('search');
+const epCountEl = document.getElementById('epCount');
+epCountEl.textContent = API_SPEC.length;
+
+function renderNav(filterText){
+  navEl.innerHTML = '';
+  const f = (filterText||'').trim().toLowerCase();
+  const groups = {};
+  API_SPEC.forEach((ep, idx) => {
+    if (f && !(ep.name.toLowerCase().includes(f) || ep.path.toLowerCase().includes(f) || ep.controllerLabel.toLowerCase().includes(f))) return;
+    groups[ep.group] = groups[ep.group] || {};
+    groups[ep.group][ep.controllerLabel] = groups[ep.group][ep.controllerLabel] || [];
+    groups[ep.group][ep.controllerLabel].push(idx);
+  });
+  ['admin','user','notify'].forEach(g => {
+    if (!groups[g]) return;
+    const gt = document.createElement('div');
+    gt.className = 'group-title';
+    gt.textContent = GROUP_LABEL[g] || g;
+    navEl.appendChild(gt);
+    Object.keys(groups[g]).forEach(ctrl => {
+      const ct = document.createElement('div');
+      ct.className = 'ctrl-title';
+      ct.textContent = ctrl;
+      navEl.appendChild(ct);
+      groups[g][ctrl].forEach(idx => {
+        const ep = API_SPEC[idx];
+        const btn = document.createElement('button');
+        btn.className = 'ep-btn';
+        btn.dataset.idx = idx;
+        btn.innerHTML = `<span class="m-badge m-${ep.method}">${ep.method}</span><span class="ep-name">${ep.name}</span>`;
+        btn.onclick = () => selectEndpoint(idx);
+        navEl.appendChild(btn);
+      });
+    });
+  });
+}
+
+searchEl.addEventListener('input', () => renderNav(searchEl.value));
+
+function authBadge(auth){
+  if (auth === 'admin') return '<span class="auth-badge auth-admin">需要管理端 token</span>';
+  if (auth === 'user') return '<span class="auth-badge auth-user">需要用户端 token</span>';
+  return '<span class="auth-badge auth-none">无需登录</span>';
+}
+
+function selectEndpoint(idx){
+  current = API_SPEC[idx];
+  document.querySelectorAll('.ep-btn').forEach(b => b.classList.toggle('active', +b.dataset.idx === idx));
+
+  document.getElementById('empty').style.display = 'none';
+  document.getElementById('detail').style.display = 'block';
+
+  document.getElementById('ep-method').textContent = current.method;
+  document.getElementById('ep-method').className = 'm-badge m-' + current.method;
+  document.getElementById('ep-path').textContent = current.path;
+  document.getElementById('ep-name').textContent = current.name;
+  document.getElementById('ep-auth').outerHTML = authBadge(current.auth).replace('<span class="auth-badge', '<span id="ep-auth" class="auth-badge');
+
+  const noteEl = document.getElementById('note');
+  if (current.note) { noteEl.style.display = 'block'; noteEl.textContent = '⚠ ' + current.note; }
+  else { noteEl.style.display = 'none'; }
+
+  // path params
+  const ppEl = document.getElementById('pathParams');
+  ppEl.innerHTML = '';
+  (current.pathParams || []).forEach(p => {
+    const wrap = document.createElement('div');
+    wrap.className = 'pp';
+    const guess = (current.bodyTemplate && current.bodyTemplate[p] !== undefined) ? current.bodyTemplate[p] : (p === 'id' ? 1 : (p === 'status' ? 1 : ''));
+    wrap.innerHTML = `<label>路径参数 {${p}}</label><input data-pp="${p}" value="${guess}">`;
+    ppEl.appendChild(wrap);
+  });
+
+  // file vs json body
+  const fileRow = document.getElementById('fileRow');
+  const bodyPanel = document.getElementById('bodyPanel');
+  const bodyLabel = document.getElementById('bodyLabel');
+  if (current.paramMode === 'multipart') {
+    fileRow.style.display = 'block';
+    bodyPanel.style.display = 'none';
+  } else {
+    fileRow.style.display = 'none';
+    bodyPanel.style.display = 'block';
+    bodyLabel.textContent = current.paramMode === 'queryParams'
+      ? '请求参数（JSON，发送时会转换为查询字符串）'
+      : (current.paramMode === 'requestBody' ? '请求体（JSON）' : '（该接口无需请求参数）');
+    document.getElementById('reqBody').value = current.bodyTemplate ? JSON.stringify(current.bodyTemplate, null, 2) : '';
+    document.getElementById('reqBody').readOnly = (current.paramMode === 'none' || current.paramMode === 'pathOnly');
+  }
+
+  document.getElementById('resBody').value = '';
+  document.getElementById('status').textContent = '';
+}
+
+function buildPath(){
+  let path = current.path;
+  document.querySelectorAll('#pathParams input').forEach(inp => {
+    path = path.replace('{' + inp.dataset.pp + '}', encodeURIComponent(inp.value));
+  });
+  return path;
+}
+
+function toQueryString(obj){
+  const parts = [];
+  Object.keys(obj || {}).forEach(k => {
+    const v = obj[k];
+    if (v === null || v === undefined || v === '') return;
+    if (Array.isArray(v)) {
+      v.forEach(item => parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(item)));
+    } else if (typeof v === 'object') {
+      // flatten one level for nested query DTOs (rare in this API)
+      parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(JSON.stringify(v)));
+    } else {
+      parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
+    }
+  });
+  return parts.join('&');
+}
+
+document.getElementById('sendBtn').addEventListener('click', async () => {
+  if (!current) return;
+  const statusEl = document.getElementById('status');
+  const resEl = document.getElementById('resBody');
+  const sendBtn = document.getElementById('sendBtn');
+  statusEl.textContent = '发送中...';
+  statusEl.className = '';
+  resEl.value = '';
+  sendBtn.disabled = true;
+
+  try {
+    let url = buildPath();
+    const headers = {};
+    if (current.auth === 'admin') {
+      const t = document.getElementById('adminToken').value.trim();
+      if (t) headers['token'] = t;
+    } else if (current.auth === 'user') {
+      const t = document.getElementById('userToken').value.trim();
+      if (t) headers['authentication'] = t;
+    }
+
+    const fetchOpts = { method: current.method, headers };
+
+    if (current.paramMode === 'multipart') {
+      const fileInput = document.getElementById('fileInput');
+      if (!fileInput.files.length) throw new Error('请先选择要上传的文件');
+      const fd = new FormData();
+      fd.append('file', fileInput.files[0]);
+      fetchOpts.body = fd; // browser sets multipart boundary automatically
+    } else if (current.paramMode === 'requestBody') {
+      const raw = document.getElementById('reqBody').value.trim();
+      headers['Content-Type'] = 'application/json';
+      fetchOpts.body = raw ? raw : '{}';
+      // validate JSON early for a clearer error than a failed request
+      JSON.parse(fetchOpts.body);
+    } else if (current.paramMode === 'queryParams') {
+      const raw = document.getElementById('reqBody').value.trim();
+      const obj = raw ? JSON.parse(raw) : {};
+      const qs = toQueryString(obj);
+      if (qs) url += (url.includes('?') ? '&' : '?') + qs;
+    }
+    // pathOnly / none: nothing extra to add
+
+    const t0 = performance.now();
+    const resp = await fetch(url, fetchOpts);
+    const ms = Math.round(performance.now() - t0);
+
+    statusEl.textContent = `${resp.status} ${resp.statusText} · ${ms}ms`;
+    statusEl.className = resp.ok ? 'status-ok' : 'status-err';
+
+    if (current.bodyType === 'binary-response') {
+      const blob = await resp.blob();
+      if (resp.ok) {
+        const dlUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = dlUrl;
+        a.download = 'export.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        resEl.value = `(二进制文件流，已触发浏览器下载：${blob.size} 字节)`;
+      } else {
+        resEl.value = await blob.text();
+      }
+    } else {
+      const text = await resp.text();
+      try {
+        resEl.value = JSON.stringify(JSON.parse(text), null, 2);
+      } catch (e) {
+        resEl.value = text;
+      }
+      // auto-capture token after a successful login call
+      if (resp.ok && /\/login$/.test(current.path)) {
+        try {
+          const data = JSON.parse(text);
+          const token = data && data.data && data.data.token;
+          if (token) {
+            if (current.group === 'admin') {
+              document.getElementById('adminToken').value = token;
+              localStorage.setItem('sky_admin_token', token);
+            } else if (current.group === 'user') {
+              document.getElementById('userToken').value = token;
+              localStorage.setItem('sky_user_token', token);
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (err) {
+    statusEl.textContent = '请求失败';
+    statusEl.className = 'status-err';
+    resEl.value = '错误：' + err.message + '\n\n（若是网络错误，请确认后端已在 8080 端口启动，且是通过本 nginx 页面访问，而不是直接打开 html 文件）';
+  } finally {
+    sendBtn.disabled = false;
+  }
+});
+
+// restore saved tokens
+const savedAdmin = localStorage.getItem('sky_admin_token');
+const savedUser = localStorage.getItem('sky_user_token');
+if (savedAdmin) document.getElementById('adminToken').value = savedAdmin;
+if (savedUser) document.getElementById('userToken').value = savedUser;
+document.getElementById('adminToken').addEventListener('change', e => localStorage.setItem('sky_admin_token', e.target.value));
+document.getElementById('userToken').addEventListener('change', e => localStorage.setItem('sky_user_token', e.target.value));
+
+renderNav('');
+</script>
+</body>
+</html>

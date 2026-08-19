@@ -1,5 +1,8 @@
 package com.sky.service.impl;
 
+import com.sky.context.BaseContext;
+import com.sky.dto.DailyOrderStatDTO;
+import com.sky.dto.DailyUserStatDTO;
 import com.sky.dto.GoodsSalesDTO;
 import com.sky.entity.Orders;
 import com.sky.mapper.OrderDetailMapper;
@@ -53,15 +56,14 @@ public class ReportServiceImpl implements ReportService {
      * @return
      */
     public TurnoverReportVO turnoverStatistics(LocalDate begin, LocalDate end) {
-        // 计算日期区间内的每一天
-        List<LocalDate> dateList = new ArrayList<>();
-        for (LocalDate date = begin; !date.isAfter(end); date = date.plusDays(1)) {
-            dateList.add(date);
-        }
+        List<LocalDate> dateList = buildDateList(begin, end);
+        Map<LocalDate, DailyOrderStatDTO> orderStatMap = getDailyOrderStatMap(begin, end);
 
-        // 查询每一天的营业额（已完成订单的实收金额之和）
         List<Double> turnoverList = dateList.stream()
-                .map(this::getTurnover)
+                .map(date -> {
+                    DailyOrderStatDTO stat = orderStatMap.get(date);
+                    return stat == null ? 0.0 : stat.getTurnover();
+                })
                 .collect(Collectors.toList());
 
         return TurnoverReportVO.builder()
@@ -77,27 +79,24 @@ public class ReportServiceImpl implements ReportService {
      * @return
      */
     public UserReportVO userStatistics(LocalDate begin, LocalDate end) {
-        List<LocalDate> dateList = new ArrayList<>();
-        for (LocalDate date = begin; !date.isAfter(end); date = date.plusDays(1)) {
-            dateList.add(date);
-        }
+        List<LocalDate> dateList = buildDateList(begin, end);
+
+        // 截至begin当天开始前（不含）已注册的用户数，作为累计总数的起点
+        Map<String, Object> beforeMap = new HashMap<>();
+        beforeMap.put("end", LocalDateTime.of(begin, LocalTime.MIN).minusNanos(1));
+        int runningTotal = getUserCount(beforeMap);
+
+        Map<LocalDate, Integer> newUserMap = userMapper.countGroupByDate(
+                        LocalDateTime.of(begin, LocalTime.MIN), LocalDateTime.of(end, LocalTime.MAX)).stream()
+                .collect(Collectors.toMap(DailyUserStatDTO::getDate, DailyUserStatDTO::getNewUserCount));
 
         List<Integer> totalUserList = new ArrayList<>();
         List<Integer> newUserList = new ArrayList<>();
-
         for (LocalDate date : dateList) {
-            LocalDateTime endTime = LocalDateTime.of(date, LocalTime.MAX);
-
-            // 总用户数：截至当天24点前注册的用户总数
-            Map<String, Object> totalMap = new HashMap<>();
-            totalMap.put("end", endTime);
-            totalUserList.add(getUserCount(totalMap));
-
-            // 新增用户数：当天注册的用户数
-            Map<String, Object> newMap = new HashMap<>();
-            newMap.put("begin", LocalDateTime.of(date, LocalTime.MIN));
-            newMap.put("end", endTime);
-            newUserList.add(getUserCount(newMap));
+            int newCount = newUserMap.getOrDefault(date, 0);
+            runningTotal += newCount;
+            newUserList.add(newCount);
+            totalUserList.add(runningTotal);
         }
 
         return UserReportVO.builder()
@@ -124,20 +123,15 @@ public class ReportServiceImpl implements ReportService {
      * @return
      */
     public OrderReportVO ordersStatistics(LocalDate begin, LocalDate end) {
-        List<LocalDate> dateList = new ArrayList<>();
-        for (LocalDate date = begin; !date.isAfter(end); date = date.plusDays(1)) {
-            dateList.add(date);
-        }
+        List<LocalDate> dateList = buildDateList(begin, end);
+        Map<LocalDate, DailyOrderStatDTO> orderStatMap = getDailyOrderStatMap(begin, end);
 
         List<Integer> orderCountList = new ArrayList<>();
         List<Integer> validOrderCountList = new ArrayList<>();
-
         for (LocalDate date : dateList) {
-            LocalDateTime beginTime = LocalDateTime.of(date, LocalTime.MIN);
-            LocalDateTime endTime = LocalDateTime.of(date, LocalTime.MAX);
-
-            orderCountList.add(getOrderCount(beginTime, endTime, null));
-            validOrderCountList.add(getOrderCount(beginTime, endTime, Orders.COMPLETED));
+            DailyOrderStatDTO stat = orderStatMap.get(date);
+            orderCountList.add(stat == null ? 0 : stat.getTotalOrderCount());
+            validOrderCountList.add(stat == null ? 0 : stat.getValidOrderCount());
         }
 
         // 时间区间内的订单总数、有效订单总数
@@ -161,23 +155,6 @@ public class ReportServiceImpl implements ReportService {
     }
 
     /**
-     * 统计指定时间区间内的订单数量
-     * @param begin
-     * @param end
-     * @param status 为空表示不限制订单状态
-     * @return
-     */
-    private Integer getOrderCount(LocalDateTime begin, LocalDateTime end, Integer status) {
-        Map<String, Object> map = new HashMap<>();
-        map.put("begin", begin);
-        map.put("end", end);
-        map.put("status", status);
-
-        Integer count = orderMapper.countByMap(map);
-        return count == null ? 0 : count;
-    }
-
-    /**
      * 销量排名top10统计
      * @param begin
      * @param end
@@ -187,7 +164,8 @@ public class ReportServiceImpl implements ReportService {
         List<GoodsSalesDTO> salesTop10 = orderDetailMapper.getSalesTop10(
                 Orders.COMPLETED,
                 LocalDateTime.of(begin, LocalTime.MIN),
-                LocalDateTime.of(end, LocalTime.MAX));
+                LocalDateTime.of(end, LocalTime.MAX),
+                BaseContext.getCurrentShopId());
 
         List<String> nameList = salesTop10.stream().map(GoodsSalesDTO::getName).collect(Collectors.toList());
         List<Integer> numberList = salesTop10.stream().map(GoodsSalesDTO::getNumber).collect(Collectors.toList());
@@ -199,21 +177,6 @@ public class ReportServiceImpl implements ReportService {
     }
 
     /**
-     * 查询某一天的营业额
-     * @param date
-     * @return
-     */
-    private Double getTurnover(LocalDate date) {
-        Map<String, Object> map = new HashMap<>();
-        map.put("status", Orders.COMPLETED);
-        map.put("begin", LocalDateTime.of(date, LocalTime.MIN));
-        map.put("end", LocalDateTime.of(date, LocalTime.MAX));
-
-        Double turnover = orderMapper.sumByMap(map);
-        return turnover == null ? 0.0 : turnover;
-    }
-
-    /**
      * 导出最近30天营业额数据Excel报表
      * @param response
      */
@@ -221,12 +184,13 @@ public class ReportServiceImpl implements ReportService {
         LocalDate begin = LocalDate.now().minusDays(30);
         LocalDate end = LocalDate.now().minusDays(1);
 
-        List<LocalDate> dateList = new ArrayList<>();
-        for (LocalDate date = begin; !date.isAfter(end); date = date.plusDays(1)) {
-            dateList.add(date);
-        }
+        List<LocalDate> dateList = buildDateList(begin, end);
+        Map<LocalDate, DailyOrderStatDTO> orderStatMap = getDailyOrderStatMap(begin, end);
         List<Double> turnoverList = dateList.stream()
-                .map(this::getTurnover)
+                .map(date -> {
+                    DailyOrderStatDTO stat = orderStatMap.get(date);
+                    return stat == null ? 0.0 : stat.getTurnover();
+                })
                 .collect(Collectors.toList());
 
         try (XSSFWorkbook excel = new XSSFWorkbook()) {
@@ -265,22 +229,37 @@ public class ReportServiceImpl implements ReportService {
         LocalDate begin = LocalDate.now().minusDays(30);
         LocalDate end = LocalDate.now().minusDays(1);
 
-        // 概览数据：整个时间区间
+        // 概览数据：整个时间区间（单次范围聚合，不按天循环）
         BusinessDataVO businessData = workspaceService.getBusinessData(
                 LocalDateTime.of(begin, LocalTime.MIN),
                 LocalDateTime.of(end, LocalTime.MAX));
 
-        List<LocalDate> dateList = new ArrayList<>();
-        for (LocalDate date = begin; !date.isAfter(end); date = date.plusDays(1)) {
-            dateList.add(date);
-        }
+        List<LocalDate> dateList = buildDateList(begin, end);
+        Map<LocalDate, DailyOrderStatDTO> orderStatMap = getDailyOrderStatMap(begin, end);
+        Map<LocalDate, Integer> newUserMap = userMapper.countGroupByDate(
+                        LocalDateTime.of(begin, LocalTime.MIN), LocalDateTime.of(end, LocalTime.MAX)).stream()
+                .collect(Collectors.toMap(DailyUserStatDTO::getDate, DailyUserStatDTO::getNewUserCount));
 
-        // 每日运营数据
-        List<BusinessDataVO> dailyDataList = dateList.stream()
-                .map(date -> workspaceService.getBusinessData(
-                        LocalDateTime.of(date, LocalTime.MIN),
-                        LocalDateTime.of(date, LocalTime.MAX)))
-                .collect(Collectors.toList());
+        // 每日运营数据：由已按天聚合好的查询结果在内存中拼装，不再逐天查库
+        List<BusinessDataVO> dailyDataList = new ArrayList<>();
+        for (LocalDate date : dateList) {
+            DailyOrderStatDTO stat = orderStatMap.get(date);
+            int totalOrderCount = stat == null ? 0 : stat.getTotalOrderCount();
+            int validOrderCount = stat == null ? 0 : stat.getValidOrderCount();
+            double turnover = stat == null ? 0.0 : stat.getTurnover();
+
+            double orderCompletionRate = totalOrderCount == 0 ? 0.0 : (double) validOrderCount / totalOrderCount;
+            double unitPrice = validOrderCount == 0 ? 0.0 : turnover / validOrderCount;
+            int newUsers = newUserMap.getOrDefault(date, 0);
+
+            dailyDataList.add(BusinessDataVO.builder()
+                    .turnover(turnover)
+                    .validOrderCount(validOrderCount)
+                    .orderCompletionRate(orderCompletionRate)
+                    .unitPrice(unitPrice)
+                    .newUsers(newUsers)
+                    .build());
+        }
 
         try (XSSFWorkbook excel = new XSSFWorkbook()) {
             Sheet sheet = excel.createSheet("运营数据统计报表");
@@ -331,5 +310,26 @@ public class ReportServiceImpl implements ReportService {
         } catch (IOException e) {
             log.error("导出运营数据报表失败：{}", e.getMessage());
         }
+    }
+
+    /**
+     * 生成 [begin, end] 区间内的日期列表
+     */
+    private List<LocalDate> buildDateList(LocalDate begin, LocalDate end) {
+        List<LocalDate> dateList = new ArrayList<>();
+        for (LocalDate date = begin; !date.isAfter(end); date = date.plusDays(1)) {
+            dateList.add(date);
+        }
+        return dateList;
+    }
+
+    /**
+     * 一次查询获取区间内每天的订单统计（总数/有效数/营业额），代替按天循环查询
+     */
+    private Map<LocalDate, DailyOrderStatDTO> getDailyOrderStatMap(LocalDate begin, LocalDate end) {
+        List<DailyOrderStatDTO> statList = orderMapper.sumAndCountGroupByDate(
+                LocalDateTime.of(begin, LocalTime.MIN), LocalDateTime.of(end, LocalTime.MAX), Orders.COMPLETED,
+                BaseContext.getCurrentShopId());
+        return statList.stream().collect(Collectors.toMap(DailyOrderStatDTO::getDate, s -> s));
     }
 }

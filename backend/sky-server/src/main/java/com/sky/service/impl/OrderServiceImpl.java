@@ -32,7 +32,9 @@ import com.sky.vo.OrderStatisticsVO;
 import com.sky.vo.OrderSubmitVO;
 import com.sky.vo.OrderVO;
 import com.sky.websocket.WebSocketServer;
+import com.sky.config.RabbitMQConfig;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,10 +57,11 @@ public class OrderServiceImpl implements OrderService {
     private final UserMapper userMapper;
     private final WeChatPayUtil weChatPayUtil;
     private final WebSocketServer webSocketServer;
+    private final RabbitTemplate rabbitTemplate;
 
     OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, AddressBookMapper addressBookMapper,
                       ShoppingCartMapper shoppingCartMapper, UserMapper userMapper, WeChatPayUtil weChatPayUtil,
-                      WebSocketServer webSocketServer) {
+                      WebSocketServer webSocketServer, RabbitTemplate rabbitTemplate) {
         this.orderMapper = orderMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.addressBookMapper = addressBookMapper;
@@ -66,6 +69,7 @@ public class OrderServiceImpl implements OrderService {
         this.shoppingCartMapper = shoppingCartMapper;
         this.userMapper = userMapper;
         this.weChatPayUtil = weChatPayUtil;
+        this.rabbitTemplate = rabbitTemplate;
     }
 
     /**
@@ -91,12 +95,13 @@ public class OrderServiceImpl implements OrderService {
 
         User user = userMapper.getById(userId);
 
-        // 插入订单
+        // 插入订单：店铺id取自购物车（购物车已保证单一店铺，不信任客户端传入的店铺id）
         Orders orders = new Orders();
         BeanUtils.copyProperties(ordersSubmitDTO, orders);
         orders.setNumber(String.valueOf(System.currentTimeMillis()));
         orders.setStatus(Orders.PENDING_PAYMENT);
         orders.setUserId(userId);
+        orders.setShopId(shoppingCartList.get(0).getShopId());
         orders.setOrderTime(LocalDateTime.now());
         orders.setPayStatus(Orders.UN_PAID);
         orders.setPhone(addressBook.getPhone());
@@ -119,6 +124,9 @@ public class OrderServiceImpl implements OrderService {
 
         // 清空购物车
         shoppingCartMapper.deleteByUserId(userId);
+
+        // 发送延迟消息，若30分钟后订单仍未支付则自动取消
+        rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_EXCHANGE, RabbitMQConfig.ORDER_TIMEOUT_DELAY_ROUTING_KEY, orders.getId());
 
         return OrderSubmitVO.builder()
                 .id(orders.getId())
@@ -161,12 +169,12 @@ public class OrderServiceImpl implements OrderService {
 
         orderMapper.update(orders);
 
-        // 通过WebSocket向商家端推送来单提醒
+        // 通过WebSocket向商家端推送来单提醒（只推给该订单所属店铺的客户端）
         JSONObject message = new JSONObject();
         message.put("type", 1); // 1表示来单提醒
         message.put("orderId", ordersDB.getId());
         message.put("content", "订单号：" + outTradeNo);
-        webSocketServer.sendToAllClient(message.toJSONString());
+        webSocketServer.sendToShopClients(ordersDB.getShopId(), message.toJSONString());
     }
 
     /**
@@ -182,12 +190,12 @@ public class OrderServiceImpl implements OrderService {
             throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
         }
 
-        // 通过WebSocket向商家端推送客户催单提醒
+        // 通过WebSocket向商家端推送客户催单提醒（只推给该订单所属店铺的客户端）
         JSONObject message = new JSONObject();
         message.put("type", 2); // 2表示客户催单
         message.put("orderId", ordersDB.getId());
         message.put("content", "订单号：" + ordersDB.getNumber());
-        webSocketServer.sendToAllClient(message.toJSONString());
+        webSocketServer.sendToShopClients(ordersDB.getShopId(), message.toJSONString());
     }
 
     /**
@@ -297,7 +305,8 @@ public class OrderServiceImpl implements OrderService {
         // 查询当前用户id
         Long userId = BaseContext.getCurrentId();
 
-        // 根据订单id查询当前订单详情
+        // 根据订单id查询原订单（取其店铺id）及订单详情
+        Orders originalOrder = orderMapper.getById(id);
         List<OrderDetail> orderDetailList = orderDetailMapper.getByOrderId(id);
 
         // 将订单详情对象转换为购物车对象
@@ -307,6 +316,7 @@ public class OrderServiceImpl implements OrderService {
             // 将原订单详情里面的菜品信息重新复制到购物车对象中
             BeanUtils.copyProperties(x, shoppingCart, "id");
             shoppingCart.setUserId(userId);
+            shoppingCart.setShopId(originalOrder.getShopId());
             shoppingCart.setCreateTime(LocalDateTime.now());
 
             return shoppingCart;
@@ -322,6 +332,7 @@ public class OrderServiceImpl implements OrderService {
      * @return
      */
     public PageResult conditionSearch(OrdersPageQueryDTO ordersPageQueryDTO) {
+        ordersPageQueryDTO.setShopId(BaseContext.getCurrentShopId());
         PageHelper.startPage(ordersPageQueryDTO.getPage(), ordersPageQueryDTO.getPageSize());
 
         Page<Orders> page = orderMapper.pageQuery(ordersPageQueryDTO);
@@ -375,10 +386,11 @@ public class OrderServiceImpl implements OrderService {
      * @return
      */
     public OrderStatisticsVO statistics() {
-        // 根据状态，分别查询出待接单、待派送、派送中的订单数量
-        Integer toBeConfirmed = orderMapper.countStatus(Orders.TO_BE_CONFIRMED);
-        Integer confirmed = orderMapper.countStatus(Orders.CONFIRMED);
-        Integer deliveryInProgress = orderMapper.countStatus(Orders.DELIVERY_IN_PROGRESS);
+        // 根据状态，分别查询出待接单、待派送、派送中的订单数量（shopId为null时平台超管可查看全平台数据）
+        Long shopId = BaseContext.getCurrentShopId();
+        Integer toBeConfirmed = orderMapper.countStatus(Orders.TO_BE_CONFIRMED, shopId);
+        Integer confirmed = orderMapper.countStatus(Orders.CONFIRMED, shopId);
+        Integer deliveryInProgress = orderMapper.countStatus(Orders.DELIVERY_IN_PROGRESS, shopId);
 
         // 将查询出的数据封装到orderStatisticsVO中响应
         OrderStatisticsVO orderStatisticsVO = new OrderStatisticsVO();
@@ -393,12 +405,26 @@ public class OrderServiceImpl implements OrderService {
      * @param ordersConfirmDTO
      */
     public void confirm(OrdersConfirmDTO ordersConfirmDTO) {
+        checkOrderBelongsToCurrentShop(ordersConfirmDTO.getId());
+
         Orders orders = Orders.builder()
                 .id(ordersConfirmDTO.getId())
                 .status(Orders.CONFIRMED)
                 .build();
 
         orderMapper.update(orders);
+    }
+
+    /**
+     * 校验订单是否存在且归属当前登录员工所在店铺，防止跨店操作订单（平台超管无具体店铺，不允许操作订单数据）
+     * @param orderId
+     */
+    private void checkOrderBelongsToCurrentShop(Long orderId) {
+        Orders ordersDB = orderMapper.getById(orderId);
+        Long shopId = BaseContext.getCurrentShopId();
+        if (ordersDB == null || shopId == null || !shopId.equals(ordersDB.getShopId())) {
+            throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
+        }
     }
 
     /**
@@ -409,8 +435,14 @@ public class OrderServiceImpl implements OrderService {
         // 根据id查询订单
         Orders ordersDB = orderMapper.getById(ordersRejectionDTO.getId());
 
+        // 校验订单归属当前店铺，防止跨店操作
+        Long shopId = BaseContext.getCurrentShopId();
+        if (ordersDB == null || shopId == null || !shopId.equals(ordersDB.getShopId())) {
+            throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
+        }
+
         // 订单只有存在且状态为2（待接单）才可以拒单
-        if (ordersDB == null || !ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
+        if (!ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
             throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
         }
 
@@ -442,6 +474,7 @@ public class OrderServiceImpl implements OrderService {
      */
     public void cancel(OrdersCancelDTO ordersCancelDTO) throws Exception {
         // 根据id查询订单
+        checkOrderBelongsToCurrentShop(ordersCancelDTO.getId());
         Orders ordersDB = orderMapper.getById(ordersCancelDTO.getId());
 
         //支付状态
@@ -470,7 +503,8 @@ public class OrderServiceImpl implements OrderService {
      * @param id
      */
     public void delivery(Long id) {
-        // 根据id查询订单
+        // 根据id查询订单，并校验归属当前店铺
+        checkOrderBelongsToCurrentShop(id);
         Orders ordersDB = orderMapper.getById(id);
 
         // 校验订单是否存在，并且状态为3
@@ -491,7 +525,8 @@ public class OrderServiceImpl implements OrderService {
      * @param id
      */
     public void complete(Long id) {
-        // 根据id查询订单
+        // 根据id查询订单，并校验归属当前店铺
+        checkOrderBelongsToCurrentShop(id);
         Orders ordersDB = orderMapper.getById(id);
 
         // 校验订单是否存在，并且状态为4

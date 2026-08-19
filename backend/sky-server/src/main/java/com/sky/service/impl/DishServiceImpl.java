@@ -11,6 +11,7 @@ import com.sky.constant.MessageConstant;
 import com.sky.constant.StatusConstant;
 import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
+import com.sky.context.BaseContext;
 import com.sky.dto.DishDTO;
 import com.sky.dto.DishPageQueryDTO;
 import com.sky.entity.Dish;
@@ -75,10 +76,14 @@ public class DishServiceImpl implements DishService {
      */
     @Transactional
     public void deleteBatch(List<Long> ids) {
-        // 判断当前菜品是否能删除--是否为起售中的菜品
+        Long shopId = BaseContext.getCurrentShopId();
+        // 判断当前菜品是否能删除--是否为起售中的菜品，同时校验菜品归属店铺，防止跨店删除
         for (Long id : ids) {
             Dish dish = dishMapper.getById(id);
-            if (dish != null && dish.getStatus() == StatusConstant.ENABLE) {
+            if (dish == null || !dish.getShopId().equals(shopId)) {
+                throw new DeletionNotAllowedException(MessageConstant.DISH_NOT_FOUND);
+            }
+            if (dish.getStatus() == StatusConstant.ENABLE) {
                 throw new DeletionNotAllowedException(MessageConstant.DISH_ON_SALE);
             }
         }
@@ -88,7 +93,7 @@ public class DishServiceImpl implements DishService {
             throw new DeletionNotAllowedException(MessageConstant.DISH_BE_RELATED_BY_SETMEAL);
         }
         // 删除菜品表中的菜品信息
-        dishMapper.deleteByIds(ids);
+        dishMapper.deleteByIds(ids, shopId);
         // 删除口味表中的口味信息
         dishFlavorMapper.deleteByDishIds(ids);
     }
@@ -100,6 +105,7 @@ public class DishServiceImpl implements DishService {
      * @return 分页结果
      */
     public PageResult pageQuery(DishPageQueryDTO dishPageQueryDTO) {
+        dishPageQueryDTO.setShopId(BaseContext.getCurrentShopId());
         PageHelper.startPage(dishPageQueryDTO.getPage(), dishPageQueryDTO.getPageSize());
         Page<DishVO> page = dishMapper.pageQuery(dishPageQueryDTO);
         return new PageResult(page.getTotal(), page.getResult());
@@ -113,9 +119,9 @@ public class DishServiceImpl implements DishService {
      */
     @Transactional(readOnly = true)
     public DishVO getByIdWithFlavor(Long dishId) {
-        // 查询菜品信息
+        // 查询菜品信息，并校验归属店铺，防止跨店查看
         Dish dish = dishMapper.getById(dishId);
-        if (dish == null) {
+        if (dish == null || !dish.getShopId().equals(BaseContext.getCurrentShopId())) {
             return null;
         }
 
@@ -140,6 +146,7 @@ public class DishServiceImpl implements DishService {
         // 更新菜品表中的菜品信息
         Dish dish = new Dish();
         BeanUtils.copyProperties(dishDTO, dish);
+        dish.setShopId(BaseContext.getCurrentShopId());
         dishMapper.update(dish);
 
         // 删除口味表中原有的口味信息
@@ -186,6 +193,7 @@ public class DishServiceImpl implements DishService {
         Dish dish = Dish.builder()
             .categoryId(categoryId)
             .status(StatusConstant.ENABLE)
+            .shopId(BaseContext.getCurrentShopId())
             .build();
         return dishMapper.list(dish);
     }
@@ -197,9 +205,11 @@ public class DishServiceImpl implements DishService {
      */
     @Transactional
     public void startOrStop(Integer status, Long id) {
+        Long shopId = BaseContext.getCurrentShopId();
         Dish dish = Dish.builder()
                 .id(id)
                 .status(status)
+                .shopId(shopId)
                 .build();
         dishMapper.update(dish);
 
@@ -211,6 +221,7 @@ public class DishServiceImpl implements DishService {
                     Setmeal setmeal = Setmeal.builder()
                             .id(setmealId)
                             .status(StatusConstant.DISABLE)
+                            .shopId(shopId)
                             .build();
                     setmealMapper.update(setmeal);
                 }

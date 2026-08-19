@@ -17,6 +17,9 @@ public class Category implements Serializable {
 
     private Long id;
 
+    //所属店铺id
+    private Long shopId;
+
     //类型: 1菜品分类 2套餐分类
     private Integer type;
 

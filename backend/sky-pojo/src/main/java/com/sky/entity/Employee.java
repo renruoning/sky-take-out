@@ -20,6 +20,9 @@ public class Employee implements Serializable {
 
     private Long id;
 
+    //所属店铺id，null表示平台超管
+    private Long shopId;
+
     private String username;
 
     private String name;

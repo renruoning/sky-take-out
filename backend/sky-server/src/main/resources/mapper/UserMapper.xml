@@ -19,4 +19,11 @@
             </if>
         </where>
     </select>
+
+    <select id="countGroupByDate" resultType="com.sky.dto.DailyUserStatDTO">
+        select date(create_time) as date, count(id) as newUserCount
+        from user
+        where create_time &gt;= #{begin} and create_time &lt;= #{end}
+        group by date(create_time)
+    </select>
 </mapper>

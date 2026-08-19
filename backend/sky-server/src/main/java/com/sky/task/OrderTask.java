@@ -22,25 +22,8 @@ public class OrderTask {
         this.orderMapper = orderMapper;
     }
 
-    /**
-     * 处理支付超时订单：每分钟触发一次，取消下单后30分钟仍未支付的订单
-     */
-    @Scheduled(cron = "0 * * * * ?")
-    public void processTimeoutOrder() {
-        log.info("处理支付超时订单：{}", LocalDateTime.now());
-
-        LocalDateTime time = LocalDateTime.now().plusMinutes(-30);
-        List<Orders> ordersList = orderMapper.getByStatusAndOrderTimeLT(Orders.PENDING_PAYMENT, time);
-
-        if (ordersList != null && !ordersList.isEmpty()) {
-            for (Orders orders : ordersList) {
-                orders.setStatus(Orders.CANCELLED);
-                orders.setCancelReason("支付超时，自动取消");
-                orders.setCancelTime(LocalDateTime.now());
-                orderMapper.update(orders);
-            }
-        }
-    }
+    // 处理支付超时订单：下单时通过 RabbitMQ 延迟消息处理，见 com.sky.mq.OrderTimeoutListener，
+    // 不再使用轮询扫表的方式，避免了大量待支付订单下每分钟全表扫描的开销
 
     /**
      * 处理一直处于派送中的订单：每天凌晨2点触发一次，将下单超过1小时仍未点击完成的订单自动置为已完成

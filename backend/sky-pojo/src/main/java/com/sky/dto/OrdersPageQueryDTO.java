@@ -27,4 +27,7 @@ public class OrdersPageQueryDTO implements Serializable {
 
     private Long userId;
 
+    //所属店铺id（管理端查询由服务层从当前登录员工上下文填充；用户端不设置）
+    private Long shopId;
+
 }

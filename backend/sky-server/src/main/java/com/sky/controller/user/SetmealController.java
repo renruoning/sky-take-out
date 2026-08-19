@@ -31,9 +31,10 @@ public class SetmealController {
      */
     @GetMapping("/list")
     @ApiOperation("根据分类id查询套餐")
-    public Result<List<Setmeal>> list(Long categoryId) {
+    public Result<List<Setmeal>> list(Long categoryId, Long shopId) {
         Setmeal setmeal = new Setmeal();
         setmeal.setCategoryId(categoryId);
+        setmeal.setShopId(shopId);
         setmeal.setStatus(StatusConstant.ENABLE);
 
         List<Setmeal> list = setmealService.list(setmeal);

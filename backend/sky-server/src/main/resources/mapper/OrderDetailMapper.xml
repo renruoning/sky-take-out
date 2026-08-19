@@ -18,6 +18,9 @@
         where o.status = #{status}
         and o.order_time &gt;= #{begin}
         and o.order_time &lt;= #{end}
+        <if test="shopId != null">
+            and o.shop_id = #{shopId}
+        </if>
         group by od.name
         order by number desc
         limit 10

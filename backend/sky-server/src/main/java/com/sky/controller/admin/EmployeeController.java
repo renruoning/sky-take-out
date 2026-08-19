@@ -59,6 +59,10 @@ public class EmployeeController {
         // 登录成功后，生成jwt令牌
         Map<String, Object> claims = new HashMap<>();
         claims.put(JwtClaimsConstant.EMP_ID, employee.getId());
+        // shopId为空表示平台超管，不放入claim（拦截器读不到该claim时BaseContext.currentShopId保持为null）
+        if (employee.getShopId() != null) {
+            claims.put(JwtClaimsConstant.SHOP_ID, employee.getShopId());
+        }
         String token = JwtUtil.createJWT(
                 jwtProperties.getAdminSecretKey(),
                 jwtProperties.getAdminTtl(),

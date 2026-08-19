@@ -69,6 +69,18 @@ public class AutoFillAspect {
             } catch (Exception e) {
                 log.error("自动填充insert公共字段失败", e);
             }
+
+            // 店铺id单独一套try/catch：只有当前请求带有明确的店铺上下文（非平台超管）才自动填充，
+            // 避免覆盖服务层为超管场景手动指定的shopId，也不影响没有shopId字段的实体（如Employee由超管创建时）
+            Long currentShopId = BaseContext.getCurrentShopId();
+            if (currentShopId != null) {
+                try {
+                    Method setShopId = entity.getClass().getDeclaredMethod(AutoFillConstant.SET_SHOP_ID, Long.class);
+                    setShopId.invoke(entity, currentShopId);
+                } catch (Exception e) {
+                    // 实体没有shopId字段（如user/address_book相关实体），无需处理
+                }
+            }
         } else if (operationType == OperationType.UPDATE) {
             try {
                 // 通过反射获取两个公共字段的 setter 方法

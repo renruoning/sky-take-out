@@ -1,6 +1,7 @@
 package com.sky.mapper;
 
 import com.github.pagehelper.Page;
+import com.sky.dto.DailyOrderStatDTO;
 import com.sky.dto.OrdersPageQueryDTO;
 import com.sky.entity.Orders;
 import org.apache.ibatis.annotations.Mapper;
@@ -47,11 +48,11 @@ public interface OrderMapper {
     Orders getById(Long id);
 
     /**
-     * 根据状态统计订单数量
+     * 根据状态统计订单数量（shopId为null时不限定店铺，供平台超管查看全平台数据）
      * @param status
+     * @param shopId
      */
-    @Select("select count(id) from orders where status = #{status}")
-    Integer countStatus(Integer status);
+    Integer countStatus(@Param("status") Integer status, @Param("shopId") Long shopId);
 
     /**
      * 根据状态和下单时间查询订单
@@ -72,4 +73,15 @@ public interface OrderMapper {
      * @param map 包含 status（可选）、begin、end
      */
     Integer countByMap(Map<String, Object> map);
+
+    /**
+     * 按天分组统计时间区间内每天的订单总数、有效订单数（validStatus）、营业额，一次查询代替按天循环查询
+     * @param begin
+     * @param end
+     * @param validStatus 视为"有效"的订单状态（已完成）
+     */
+    List<DailyOrderStatDTO> sumAndCountGroupByDate(@Param("begin") LocalDateTime begin,
+                                                    @Param("end") LocalDateTime end,
+                                                    @Param("validStatus") Integer validStatus,
+                                                    @Param("shopId") Long shopId);
 }
