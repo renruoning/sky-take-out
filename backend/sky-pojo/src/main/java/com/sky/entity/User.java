@@ -19,6 +19,12 @@ public class User implements Serializable {
 
     private Long id;
 
+    //用户名（账号密码登录）
+    private String username;
+
+    //密码（MD5加密）
+    private String password;
+
     //微信用户唯一标识
     private String openid;
 

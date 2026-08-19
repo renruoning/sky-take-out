@@ -36,8 +36,9 @@ public interface ShopService {
     void startOrStop(Integer status, Long id);
 
     /**
-     * 查询所有启用中的店铺（用户端选店铺，公开接口）
+     * 查询所有启用中的店铺（用户端选店铺）
+     * @param businessType 按主/副营业类型过滤，null表示不过滤
      * @return
      */
-    List<Shop> listActive();
+    List<Shop> listActive(Integer businessType);
 }

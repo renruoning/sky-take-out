@@ -1,6 +1,7 @@
 package com.sky.controller.user;
 
 import com.sky.constant.JwtClaimsConstant;
+import com.sky.dto.UserAccountLoginDTO;
 import com.sky.dto.UserLoginDTO;
 import com.sky.entity.User;
 import com.sky.properties.JwtProperties;
@@ -36,26 +37,46 @@ public class UserController {
     }
 
     /**
-     * 微信登录
-     * @param userLoginDTO
+     * 账号密码登录
+     * @param userAccountLoginDTO
      * @return
      */
     @PostMapping("/login")
-    @ApiOperation("微信登录")    
-    public Result<UserLoginVO> login(@RequestBody UserLoginDTO userLoginDTO){
-        log.info("微信用户登录：{}",userLoginDTO.getCode());
-        User user = userService.wxLogin(userLoginDTO);
+    @ApiOperation("账号密码登录")
+    public Result<UserLoginVO> login(@RequestBody UserAccountLoginDTO userAccountLoginDTO){
+        log.info("用户登录：{}", userAccountLoginDTO.getUsername());
+        User user = userService.accountLogin(userAccountLoginDTO);
         Map<String, Object> claims = new HashMap<>();
         claims.put(JwtClaimsConstant.USER_ID, user.getId());
 
-        //为微信用户生成jwt令牌
         String token = JwtUtil.createJWT(jwtProperties.getUserSecretKey(), jwtProperties.getUserTtl(), claims);
 
         UserLoginVO userLoginVO = UserLoginVO.builder()
                         .id(user.getId())
                         .openid(user.getOpenid())
                         .token(token)
-                        .build();;
+                        .build();
         return Result.success(userLoginVO);
     }
+
+    /**
+     * 微信登录（暂时和微信解绑，先不对外暴露；wxLogin逻辑保留在Service中以便后续恢复）
+     * @param userLoginDTO
+     * @return
+     */
+    // @PostMapping("/wxlogin")
+    // @ApiOperation("微信登录")
+    // public Result<UserLoginVO> wxLogin(@RequestBody UserLoginDTO userLoginDTO){
+    //     log.info("微信用户登录：{}",userLoginDTO.getCode());
+    //     User user = userService.wxLogin(userLoginDTO);
+    //     Map<String, Object> claims = new HashMap<>();
+    //     claims.put(JwtClaimsConstant.USER_ID, user.getId());
+    //     String token = JwtUtil.createJWT(jwtProperties.getUserSecretKey(), jwtProperties.getUserTtl(), claims);
+    //     UserLoginVO userLoginVO = UserLoginVO.builder()
+    //                     .id(user.getId())
+    //                     .openid(user.getOpenid())
+    //                     .token(token)
+    //                     .build();
+    //     return Result.success(userLoginVO);
+    // }
 }

@@ -12,6 +12,9 @@
             <if test="status != null">
                 and status = #{status}
             </if>
+            <if test="businessType != null">
+                and (business_type = #{businessType} or secondary_business_type = #{businessType})
+            </if>
         </where>
         order by create_time desc
     </select>
@@ -23,10 +26,24 @@
             <if test="address != null">address = #{address},</if>
             <if test="phone != null">phone = #{phone},</if>
             <if test="status != null">status = #{status},</if>
+            <if test="businessType != null">business_type = #{businessType},</if>
+            <!-- 和其他可空字段一样走"非null才更新"的部分更新语义：能设置/更改副营业类型，但不能靠这个通用update把已有的副营业类型清空成空——
+                 这与Dish的image/description等字段是同一套既有约定，不是本次新引入的限制 -->
+            <if test="secondaryBusinessType != null">secondary_business_type = #{secondaryBusinessType},</if>
+            <if test="businessTypeUpdatedAt != null">business_type_updated_at = #{businessTypeUpdatedAt},</if>
             <if test="updateTime != null">update_time = #{updateTime},</if>
             <if test="updateUser != null">update_user = #{updateUser}</if>
         </set>
         where id = #{id}
     </update>
+
+    <select id="listActive" resultType="com.sky.entity.Shop">
+        select * from shop
+        where status = 1
+        <if test="businessType != null">
+            and (business_type = #{businessType} or secondary_business_type = #{businessType})
+        </if>
+        order by id
+    </select>
 
 </mapper>

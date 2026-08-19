@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Sky Take Out - 系统管理员后台</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1c2438; --border:#2a3450;
+    --text:#e6e9f0; --muted:#8b93a7; --accent:#4f8cff; --accent2:#3a6fd8;
+    --ok:#3fb950; --err:#f85149; --warn:#d29922;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{background:var(--bg);color:var(--text);font-family:"Segoe UI",Consolas,-apple-system,sans-serif;font-size:14px;}
+  button{cursor:pointer;font-family:inherit;}
+  input{font-family:inherit;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 9px;}
+  input:focus{outline:none;border-color:var(--accent);}
+  a{color:var(--accent);}
+
+  #loginView{display:flex;align-items:center;justify-content:center;height:100vh;}
+  #loginBox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px 36px;width:320px;}
+  #loginBox h1{font-size:18px;margin:0 0 4px;}
+  #loginBox p{color:var(--muted);font-size:12px;margin:0 0 20px;}
+  #loginBox label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px;}
+  #loginBox input{width:100%;padding:9px 10px;}
+  #loginBox button{width:100%;margin-top:20px;background:var(--accent);color:#fff;border:none;padding:10px;border-radius:7px;font-size:14px;font-weight:600;}
+  #loginBox button:hover{background:var(--accent2);}
+  #loginErr{color:var(--err);font-size:12.5px;margin-top:10px;min-height:16px;}
+  #loginHint{margin-top:18px;font-size:11.5px;color:var(--muted);line-height:1.6;border-top:1px solid var(--border);padding-top:12px;}
+
+  #app{display:none;height:100vh;flex-direction:column;}
+  #topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--border);flex:none;}
+  #topbar .who{font-size:13px;color:var(--muted);}
+  #topbar .who b{color:var(--text);}
+  #logoutBtn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:6px 12px;border-radius:6px;font-size:12px;}
+  #logoutBtn:hover{border-color:var(--err);color:var(--err);}
+
+  #main{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);padding:24px;}
+  #main .box{max-width:480px;}
+  #main h2{color:var(--text);margin:0 0 10px;}
+</style>
+</head>
+<body>
+
+<div id="loginView">
+  <div id="loginBox">
+    <h1>Sky Take Out</h1>
+    <p>系统管理员后台</p>
+    <label>用户名</label>
+    <input id="loginUsername" placeholder="平台超管用户名">
+    <label>密码</label>
+    <input id="loginPassword" type="password" placeholder="密码">
+    <button id="loginBtn">登录</button>
+    <div id="loginErr"></div>
+    <div id="loginHint">测试账号：platform/123456。<br>店铺老板/员工请到<a href="admin.html">商家管理后台</a>登录。</div>
+  </div>
+</div>
+
+<div id="app">
+  <div id="topbar">
+    <div class="who">当前登录：<b id="whoName">-</b></div>
+    <button id="logoutBtn">退出登录</button>
+  </div>
+  <div id="main">
+    <div class="box">
+      <h2>系统管理员后台</h2>
+      <p>登录成功。具体管理功能（店铺管理、员工管理等）还在规划中，敬请期待。</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOKEN_KEY = 'sky_system_admin_token';
+const WHO_KEY = 'sky_system_admin_who';
+let token = localStorage.getItem(TOKEN_KEY) || '';
+let who = JSON.parse(localStorage.getItem(WHO_KEY) || 'null');
+
+document.getElementById('loginBtn').addEventListener('click', async () => {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginErr');
+  errEl.textContent = '';
+  if (!username || !password) { errEl.textContent = '请输入用户名和密码'; return; }
+  try {
+    const resp = await fetch('/admin/employee/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    const data = await resp.json();
+    if (data.code !== 1) { errEl.textContent = data.msg || '登录失败'; return; }
+    token = data.data.token;
+    who = { name: data.data.name, userName: data.data.userName };
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(WHO_KEY, JSON.stringify(who));
+    enterApp();
+  } catch (e) {
+    errEl.textContent = '网络错误：' + e.message;
+  }
+});
+
+function doLogout(){
+  token = '';
+  who = null;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(WHO_KEY);
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginView').style.display = 'flex';
+}
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  fetch('/admin/employee/logout', { method: 'POST', headers: { token } }).catch(() => {});
+  doLogout();
+});
+
+function enterApp(){
+  document.getElementById('loginView').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('whoName').textContent = (who && who.name) || '-';
+}
+
+if (token) { enterApp(); } else { document.getElementById('loginView').style.display = 'flex'; }
+</script>
+</body>
+</html>

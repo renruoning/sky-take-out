@@ -279,14 +279,7 @@ public class OrderServiceImpl implements OrderService {
 
         // 订单处于待接单状态下取消，需要进行退款
         if (ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
-            //调用微信支付退款接口
-            weChatPayUtil.refund(
-                    ordersDB.getNumber(), //商户订单号
-                    ordersDB.getNumber(), //商户退款单号
-                    new BigDecimal(0.01),//退款金额，单位 元
-                    new BigDecimal(0.01));//原订单金额
-
-            //支付状态修改为 退款
+            // 暂无微信支付商户资质，无法调用真实的微信退款接口，直接跳过并标记为已退款，逻辑同 payment() 里的处理
             orders.setPayStatus(Orders.REFUND);
         }
 
@@ -449,13 +442,8 @@ public class OrderServiceImpl implements OrderService {
         //支付状态
         Integer payStatus = ordersDB.getPayStatus();
         if (payStatus.equals(Orders.PAID)) {
-            //用户已支付，需要退款
-            String refund = weChatPayUtil.refund(
-                    ordersDB.getNumber(),
-                    ordersDB.getNumber(),
-                    new BigDecimal(0.01),
-                    new BigDecimal(0.01));
-            log.info("申请退款：{}", refund);
+            // 暂无微信支付商户资质，无法调用真实的微信退款接口，跳过并只记录日志
+            log.info("订单{}已支付，拒单需要退款（未接入真实微信支付，跳过实际退款调用）", ordersDB.getNumber());
         }
 
         // 拒单需要退款，根据订单id更新订单状态、拒单原因、取消时间
@@ -480,13 +468,8 @@ public class OrderServiceImpl implements OrderService {
         //支付状态
         Integer payStatus = ordersDB.getPayStatus();
         if (payStatus.equals(Orders.PAID)) {
-            //用户已支付，需要退款
-            String refund = weChatPayUtil.refund(
-                    ordersDB.getNumber(),
-                    ordersDB.getNumber(),
-                    new BigDecimal(0.01),
-                    new BigDecimal(0.01));
-            log.info("申请退款：{}", refund);
+            // 暂无微信支付商户资质，无法调用真实的微信退款接口，跳过并只记录日志
+            log.info("订单{}已支付，管理端取消需要退款（未接入真实微信支付，跳过实际退款调用）", ordersDB.getNumber());
         }
 
         // 管理端取消订单需要退款，根据订单id更新订单状态、取消原因、取消时间

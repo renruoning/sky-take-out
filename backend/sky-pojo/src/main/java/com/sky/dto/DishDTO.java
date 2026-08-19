@@ -23,6 +23,8 @@ public class DishDTO implements Serializable {
     private String description;
     //0 停售 1 起售
     private Integer status;
+    //是否处方药 0否 1是，可不传（默认0），仅医药类目店铺的商品会用到
+    private Integer needPrescription;
     //口味
     private List<DishFlavor> flavors = new ArrayList<>();
 

@@ -14,7 +14,10 @@ import com.sky.service.ShopService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 店铺（商户）管理 —— 平台超管专用
@@ -39,9 +42,17 @@ public class ShopServiceImpl implements ShopService {
 
     public void save(ShopDTO shopDTO) {
         checkPlatformAdmin();
+        if (shopDTO.getBusinessType() == null) {
+            throw new ShopBusinessException(MessageConstant.SHOP_BUSINESS_TYPE_REQUIRED);
+        }
+        checkSecondaryBusinessTypeDiffers(shopDTO.getBusinessType(), shopDTO.getSecondaryBusinessType());
+
         Shop shop = new Shop();
         BeanUtils.copyProperties(shopDTO, shop);
         shop.setStatus(1);
+        // 注意：这里故意不设置businessTypeUpdatedAt（留空）。如果在建店时就把它设成当前时间，
+        // 会导致店铺刚建好、还没真正“改过”一次营业类型，就已经被一年冷却卡住第一次修改——
+        // 冷却应该从第一次真实修改开始算，不是从建店开始算。
         shopMapper.insert(shop);
     }
 
@@ -56,7 +67,36 @@ public class ShopServiceImpl implements ShopService {
         checkPlatformAdmin();
         Shop shop = new Shop();
         BeanUtils.copyProperties(shopDTO, shop);
+
+        boolean changingBusinessType = shopDTO.getBusinessType() != null || shopDTO.getSecondaryBusinessType() != null;
+        if (changingBusinessType) {
+            Shop current = shopMapper.getById(shopDTO.getId());
+            Integer newPrimary = shopDTO.getBusinessType() != null ? shopDTO.getBusinessType() : current.getBusinessType();
+            Integer newSecondary = shopDTO.getSecondaryBusinessType();
+            // 只有真的和数据库里现有值不一样，才算“在改营业类型”，避免把原值原样传回来也触发一年冷却
+            boolean primaryChanged = !Objects.equals(newPrimary, current.getBusinessType());
+            boolean secondaryChanged = shopDTO.getSecondaryBusinessType() != null
+                    && !Objects.equals(newSecondary, current.getSecondaryBusinessType());
+            if (primaryChanged || secondaryChanged) {
+                if (current.getBusinessTypeUpdatedAt() != null
+                        && ChronoUnit.DAYS.between(current.getBusinessTypeUpdatedAt(), LocalDateTime.now()) < 365) {
+                    throw new ShopBusinessException(MessageConstant.SHOP_BUSINESS_TYPE_COOLDOWN);
+                }
+                checkSecondaryBusinessTypeDiffers(newPrimary, newSecondary != null ? newSecondary : current.getSecondaryBusinessType());
+                shop.setBusinessTypeUpdatedAt(LocalDateTime.now());
+            }
+        }
+
         shopMapper.update(shop);
+    }
+
+    /**
+     * 副营业类型非空时必须和主营业类型不同
+     */
+    private void checkSecondaryBusinessTypeDiffers(Integer businessType, Integer secondaryBusinessType) {
+        if (secondaryBusinessType != null && secondaryBusinessType.equals(businessType)) {
+            throw new ShopBusinessException(MessageConstant.SHOP_BUSINESS_TYPE_DUPLICATE);
+        }
     }
 
     public void startOrStop(Integer status, Long id) {
@@ -68,7 +108,7 @@ public class ShopServiceImpl implements ShopService {
         shopMapper.update(shop);
     }
 
-    public List<Shop> listActive() {
-        return shopMapper.listActive();
+    public List<Shop> listActive(Integer businessType) {
+        return shopMapper.listActive(businessType);
     }
 }

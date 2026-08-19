@@ -30,5 +30,14 @@ public class MessageConstant {
     public static final String SHOP_SCOPED_ONLY = "平台超管无法操作具体店铺数据，请以店铺员工身份登录";
     public static final String SHOPPING_CART_SHOP_CONFLICT = "购物车中含有其他店铺的商品，请先清空购物车";
     public static final String PLATFORM_MUST_SPECIFY_SHOP = "平台超管新增员工时必须指定所属店铺shopId";
+    public static final String SHOP_BUSINESS_TYPE_REQUIRED = "新增店铺必须指定主营业类型";
+    public static final String SHOP_BUSINESS_TYPE_DUPLICATE = "副营业类型不能与主营业类型相同";
+    public static final String SHOP_BUSINESS_TYPE_COOLDOWN = "距离上次修改营业类型不足一年，暂不能再次修改";
+    public static final String REVIEW_ORDER_NOT_COMPLETED = "订单未完成，暂不能评价";
+    public static final String REVIEW_ORDER_NOT_OWNED = "只能评价自己的订单";
+    public static final String REVIEW_ALREADY_EXISTS = "该订单已评价过";
+    public static final String REVIEW_NOT_FOUND = "评价不存在";
+    public static final String AI_CONVERSATION_NOT_FOUND = "会话不存在";
+    public static final String AI_SERVICE_UNAVAILABLE = "AI服务暂时不可用，请稍后再试";
 
 }

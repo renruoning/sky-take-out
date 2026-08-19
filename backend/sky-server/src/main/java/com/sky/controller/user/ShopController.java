@@ -6,7 +6,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sky.entity.Shop;
 import com.sky.result.Result;
+import com.sky.service.ReviewService;
 import com.sky.service.ShopService;
+import com.sky.vo.ShopRatingSummaryVO;
+import com.sky.vo.ShopVO;
 
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -15,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 
 
@@ -28,11 +32,26 @@ public class ShopController {
     private static final String KEY_PREFIX = "SHOP_STATUS:";
     private final RedisTemplate<String, Object> redisTemplate;
     private final ShopService shopService;
+    private final ReviewService reviewService;
 
     @GetMapping("/list")
-    @ApiOperation("查询所有营业中的店铺，供用户端选店铺使用")
-    public Result<List<Shop>> list() {
-        return Result.success(shopService.listActive());
+    @ApiOperation("查询营业中的店铺，供用户端选店铺使用；businessType按主/副营业类型过滤，不传则返回全部")
+    public Result<List<ShopVO>> list(Integer businessType) {
+        List<Shop> shops = shopService.listActive(businessType);
+        List<ShopVO> result = shops.stream().map(shop -> {
+            ShopRatingSummaryVO summary = reviewService.getShopRatingSummary(shop.getId());
+            return ShopVO.builder()
+                    .id(shop.getId())
+                    .name(shop.getName())
+                    .address(shop.getAddress())
+                    .phone(shop.getPhone())
+                    .businessType(shop.getBusinessType())
+                    .secondaryBusinessType(shop.getSecondaryBusinessType())
+                    .avgRating(summary.getAvgRating())
+                    .reviewCount(summary.getReviewCount())
+                    .build();
+        }).collect(Collectors.toList());
+        return Result.success(result);
     }
 
     @GetMapping("/status")

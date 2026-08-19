@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Sky Take Out - 用户端浏览</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1c2438; --border:#2a3450;
+    --text:#e6e9f0; --muted:#8b93a7; --accent:#4f8cff; --accent2:#3a6fd8;
+    --ok:#3fb950; --err:#f85149; --warn:#d29922;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{background:var(--bg);color:var(--text);font-family:"Segoe UI",Consolas,-apple-system,sans-serif;font-size:14px;}
+  button{cursor:pointer;font-family:inherit;}
+  input,select,textarea{font-family:inherit;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 9px;}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);}
+
+  #topbar{display:flex;align-items:center;gap:14px;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap;}
+  #topbar h1{font-size:16px;margin:0;flex:none;}
+  #tokenInput{width:340px;font-size:12px;}
+  #tokenStatus{font-size:12px;color:var(--muted);}
+
+  #typeBar{display:flex;gap:10px;padding:16px 24px;flex-wrap:wrap;background:var(--panel);border-bottom:1px solid var(--border);}
+  .type-btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 20px;border-radius:20px;font-size:13.5px;font-weight:600;}
+  .type-btn:hover{border-color:var(--accent);}
+  .type-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+
+  #main{padding:22px 24px;max-width:1100px;margin:0 auto;}
+  #shopGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
+  .shop-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;cursor:pointer;transition:border-color .15s;}
+  .shop-card:hover{border-color:var(--accent);}
+  .shop-card h3{margin:0 0 6px;font-size:15px;}
+  .shop-card .meta{color:var(--muted);font-size:12.5px;line-height:1.7;}
+  .shop-card .rating{margin-top:8px;font-size:13px;color:var(--warn);}
+  .shop-card .rating .count{color:var(--muted);margin-left:4px;}
+  .type-tag{display:inline-block;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:1px 8px;font-size:11px;color:var(--muted);margin-right:4px;}
+
+  .empty{color:var(--muted);text-align:center;padding:60px 0;font-size:13.5px;}
+  .err-banner{background:#2a1414;border:1px solid #5c2323;color:#ff9a9a;padding:8px 12px;border-radius:6px;font-size:12.5px;margin-bottom:14px;}
+
+  /* shop detail */
+  #shopDetail{display:none;}
+  #backBtn{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 14px;border-radius:6px;font-size:12.5px;margin-bottom:16px;}
+  #shopDetail h2{margin:0 0 4px;}
+  #shopDetail .meta{color:var(--muted);font-size:12.5px;margin-bottom:18px;}
+
+  .section-title{font-size:14px;font-weight:600;margin:22px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
+  .cat-block{margin-bottom:18px;}
+  .cat-block h4{font-size:13px;color:var(--muted);margin:0 0 8px;}
+  .dish-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;}
+  .dish-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12.5px;}
+  .dish-card .name{font-weight:600;margin-bottom:4px;}
+  .dish-card .price{color:var(--warn);}
+  .rx-tag{display:inline-block;background:#3a1212;color:#ff9a9a;border-radius:4px;padding:0 5px;font-size:10.5px;margin-left:4px;}
+
+  .review-item{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;font-size:13px;}
+  .review-item .head{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px;}
+  .review-item .stars{color:var(--warn);}
+  .review-item .reply{margin-top:8px;padding:8px 10px;background:var(--panel2);border-radius:6px;font-size:12.5px;color:var(--muted);}
+  .review-item .reply b{color:var(--text);}
+
+  ::-webkit-scrollbar{width:10px;height:10px;}
+  ::-webkit-scrollbar-thumb{background:#2f3a58;border-radius:6px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+
+  /* AI客服 */
+  #aiFab{position:fixed;right:22px;bottom:22px;width:52px;height:52px;border-radius:50%;background:var(--accent);border:none;color:#fff;font-size:22px;box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:150;}
+  #aiFab:hover{background:var(--accent2);}
+  #aiPanel{position:fixed;right:22px;bottom:86px;width:340px;height:460px;background:var(--panel);border:1px solid var(--border);border-radius:12px;display:none;flex-direction:column;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:150;}
+  #aiPanel.active{display:flex;}
+  #aiPanelHead{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--panel2);border-bottom:1px solid var(--border);font-size:13px;font-weight:600;}
+  #aiPanelHead button{background:transparent;border:none;color:var(--muted);font-size:16px;}
+  #aiMessages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;}
+  .ai-bubble{max-width:85%;padding:8px 11px;border-radius:10px;font-size:12.5px;line-height:1.5;white-space:pre-wrap;}
+  .ai-bubble.user{align-self:flex-end;background:var(--accent);color:#fff;}
+  .ai-bubble.assistant{align-self:flex-start;background:var(--panel2);border:1px solid var(--border);}
+  .ai-bubble.pending{align-self:flex-start;color:var(--muted);font-style:italic;}
+  #aiInputRow{display:flex;gap:6px;padding:10px;border-top:1px solid var(--border);}
+  #aiInputRow input{flex:1;}
+  #aiInputRow button{background:var(--accent);border:none;color:#fff;border-radius:6px;padding:0 14px;font-size:13px;}
+  #aiInputRow button:hover{background:var(--accent2);}
+
+  /* 购物车按钮上的数量角标 */
+  .badge{display:inline-block;min-width:16px;padding:0 4px;background:var(--warn);color:#1a1200;border-radius:9px;font-size:11px;font-weight:700;text-align:center;margin-left:4px;}
+
+  /* 通用弹窗（购物车 / 地址 / 订单 / 结算） */
+  #modalOverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:200;}
+  #modalOverlay.active{display:flex;}
+  #modalBox{background:var(--panel);border:1px solid var(--border);border-radius:12px;width:460px;max-width:92vw;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.5);}
+  #modalHead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--panel2);border-bottom:1px solid var(--border);font-size:14px;font-weight:600;}
+  #modalHead button{background:transparent;border:none;color:var(--muted);font-size:17px;}
+  #modalBody{padding:14px 16px;overflow-y:auto;font-size:13px;}
+
+  .cart-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);}
+  .cart-row .name{flex:1;}
+  .cart-row .qty{display:flex;align-items:center;gap:8px;}
+  .qty-btn{width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px;line-height:1;}
+  .qty-btn:hover{border-color:var(--accent);}
+  .cart-total{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:14px;font-weight:600;}
+  .primary-btn{background:var(--accent);border:none;color:#fff;border-radius:6px;padding:8px 16px;font-size:13px;}
+  .primary-btn:hover{background:var(--accent2);}
+  .danger-link{color:var(--err);background:none;border:none;font-size:12px;padding:0;}
+
+  .addr-item{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;}
+  .addr-item .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+  .addr-item .ops{display:flex;gap:10px;margin-top:6px;}
+  .default-tag{display:inline-block;background:var(--accent);color:#fff;border-radius:4px;padding:0 6px;font-size:10.5px;margin-left:6px;}
+  .addr-form{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
+  .addr-form input{width:100%;}
+  .addr-form .full{grid-column:1 / -1;}
+
+  .order-item{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;}
+  .order-item .head{display:flex;justify-content:space-between;margin-bottom:4px;color:var(--muted);}
+  .review-form{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);}
+  .review-form textarea{resize:vertical;min-height:50px;font-size:12.5px;}
+  .star-choice{cursor:pointer;font-size:18px;color:var(--warn);margin-right:2px;}
+  .order-status{font-weight:600;color:var(--warn);}
+  .dish-card .add-btn{margin-top:6px;background:var(--accent);border:none;color:#fff;border-radius:5px;padding:3px 10px;font-size:11.5px;}
+  .dish-card .add-btn:hover{background:var(--accent2);}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>Sky Take Out</h1>
+  <input id="loginUsername" placeholder="用户名" style="width:110px;">
+  <input id="loginPassword" type="password" placeholder="密码" style="width:110px;">
+  <button class="type-btn" id="loginBtn" style="padding:6px 14px;">登录</button>
+  <button class="type-btn" id="logoutBtn" style="padding:6px 14px;">退出</button>
+  <span id="tokenStatus"></span>
+  <button class="type-btn" id="cartBtn" style="padding:6px 14px;">🛒 购物车<span class="badge" id="cartBadge" style="display:none;">0</span></button>
+  <button class="type-btn" id="addrBtn" style="padding:6px 14px;">📍 我的地址</button>
+  <button class="type-btn" id="ordersBtn" style="padding:6px 14px;">📦 我的订单</button>
+</div>
+
+<div id="typeBar">
+  <button class="type-btn active" data-type="">全部</button>
+  <button class="type-btn" data-type="1">🍜 餐饮</button>
+  <button class="type-btn" data-type="2">💊 医药</button>
+  <button class="type-btn" data-type="3">🥦 蔬果</button>
+  <button class="type-btn" data-type="4">💐 花卉</button>
+</div>
+
+<div id="main">
+  <div id="listErr"></div>
+  <div id="shopListView">
+    <div id="shopGrid"></div>
+  </div>
+
+  <div id="shopDetail">
+    <button id="backBtn">← 返回店铺列表</button>
+    <div id="detailErr"></div>
+    <h2 id="detailName"></h2>
+    <div class="meta" id="detailMeta"></div>
+
+    <div class="section-title">菜单</div>
+    <div id="menuBox"></div>
+
+    <div class="section-title">用户评价</div>
+    <div id="reviewBox"></div>
+  </div>
+</div>
+
+<div id="modalOverlay">
+  <div id="modalBox">
+    <div id="modalHead">
+      <span id="modalTitle"></span>
+      <button id="modalCloseBtn">✕</button>
+    </div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<button id="aiFab" title="AI客服">💬</button>
+<div id="aiPanel">
+  <div id="aiPanelHead">
+    <span>AI 客服</span>
+    <button id="aiCloseBtn">✕</button>
+  </div>
+  <div id="aiMessages"></div>
+  <div id="aiInputRow">
+    <input id="aiInput" placeholder="有什么可以帮你的？">
+    <button id="aiSendBtn">发送</button>
+  </div>
+</div>
+
+<script>
+const TOKEN_KEY = 'sky_customer_token';
+let token = localStorage.getItem(TOKEN_KEY) || '';
+const BUSINESS_TYPE_TEXT = {1:'餐饮', 2:'医药', 3:'蔬果', 4:'花卉'};
+
+updateTokenStatus();
+
+function updateTokenStatus(){
+  document.getElementById('tokenStatus').textContent = token ? '已登录' : '未登录，接口会401';
+}
+
+document.getElementById('loginBtn').addEventListener('click', async () => {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value.trim();
+  if (!username || !password) { alert('请输入用户名和密码'); return; }
+  try {
+    const resp = await fetch('/user/user/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await resp.json();
+    if (data.code !== 1) throw new Error(data.msg || '登录失败');
+    token = data.data.token;
+    localStorage.setItem(TOKEN_KEY, token);
+    updateTokenStatus();
+    loadShops(currentType);
+    refreshCartBadge();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  token = '';
+  localStorage.removeItem(TOKEN_KEY);
+  updateTokenStatus();
+  refreshCartBadge();
+});
+
+async function api(path, query){
+  let url = path;
+  if (query) {
+    const qs = Object.entries(query)
+      .filter(([,v]) => v !== undefined && v !== null && v !== '')
+      .map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v))
+      .join('&');
+    if (qs) url += (url.includes('?') ? '&' : '?') + qs;
+  }
+  const headers = {};
+  if (token) headers['authentication'] = token;
+  const resp = await fetch(url, { headers });
+  if (resp.status === 401) throw new Error('未登录或token已过期，请在顶部登录');
+  const data = await resp.json();
+  if (data.code !== 1) throw new Error(data.msg || '请求失败');
+  return data.data;
+}
+
+function esc(str){
+  return String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function stars(rating){
+  const n = Math.round(rating || 0);
+  return '★'.repeat(n) + '☆'.repeat(5 - n);
+}
+function typeTags(shop){
+  let html = `<span class="type-tag">${BUSINESS_TYPE_TEXT[shop.businessType] || '未知'}</span>`;
+  if (shop.secondaryBusinessType) html += `<span class="type-tag">${BUSINESS_TYPE_TEXT[shop.secondaryBusinessType] || ''}</span>`;
+  return html;
+}
+
+// ---------------- 店铺列表 ----------------
+let currentType = '';
+document.querySelectorAll('.type-btn[data-type]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.type-btn[data-type]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentType = btn.dataset.type;
+    document.getElementById('shopDetail').style.display = 'none';
+    document.getElementById('shopListView').style.display = 'block';
+    loadShops(currentType);
+  });
+});
+
+async function loadShops(businessType){
+  const errEl = document.getElementById('listErr');
+  errEl.innerHTML = '';
+  const grid = document.getElementById('shopGrid');
+  grid.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const shops = await api('/user/shop/list', { businessType });
+    if (!shops.length) { grid.innerHTML = '<div class="empty">该类目下暂无店铺</div>'; return; }
+    grid.innerHTML = shops.map(s => `
+      <div class="shop-card" onclick="openShop(${s.id}, '${esc(s.name)}')">
+        <h3>${esc(s.name)}</h3>
+        <div class="meta">${esc(s.address || '')}<br>${esc(s.phone || '')}</div>
+        <div>${typeTags(s)}</div>
+        <div class="rating">${s.avgRating != null ? stars(s.avgRating) + ' ' + s.avgRating.toFixed(1) : '暂无评分'}<span class="count">(${s.reviewCount || 0}条评价)</span></div>
+      </div>`).join('');
+  } catch (e) {
+    errEl.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
+    grid.innerHTML = '';
+  }
+}
+
+// ---------------- 店铺详情 ----------------
+let currentShopId = null;
+async function openShop(id, name){
+  currentShopId = id;
+  document.getElementById('shopListView').style.display = 'none';
+  document.getElementById('shopDetail').style.display = 'block';
+  document.getElementById('detailName').textContent = name;
+  document.getElementById('detailMeta').textContent = '';
+  document.getElementById('detailErr').innerHTML = '';
+  document.getElementById('menuBox').innerHTML = '加载中...';
+  document.getElementById('reviewBox').innerHTML = '加载中...';
+
+  loadMenu(id);
+  loadReviews(id);
+}
+document.getElementById('backBtn').addEventListener('click', () => {
+  document.getElementById('shopDetail').style.display = 'none';
+  document.getElementById('shopListView').style.display = 'block';
+});
+
+async function loadMenu(shopId){
+  const box = document.getElementById('menuBox');
+  try {
+    const categories = await api('/user/category/list', { type: 1, shopId });
+    if (!categories.length) { box.innerHTML = '<div class="empty">该店暂无菜品分类</div>'; return; }
+    let html = '';
+    for (const cat of categories) {
+      const dishes = await api('/user/dish/list', { categoryId: cat.id, shopId });
+      html += `<div class="cat-block"><h4>${esc(cat.name)}</h4><div class="dish-grid">`;
+      if (!dishes.length) {
+        html += '<div class="empty" style="padding:10px 0;">暂无上架商品</div>';
+      } else {
+        html += dishes.map(d => `
+          <div class="dish-card">
+            <div class="name">${esc(d.name)}${d.needPrescription === 1 ? '<span class="rx-tag">处方药</span>' : ''}</div>
+            <div class="price">￥${d.price}</div>
+            <button class="add-btn" onclick="addToCart(${d.id}, ${shopId})">加入购物车</button>
+          </div>`).join('');
+      }
+      html += '</div></div>';
+    }
+    box.innerHTML = html || '<div class="empty">该店暂无上架商品</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
+  }
+}
+
+async function loadReviews(shopId){
+  const box = document.getElementById('reviewBox');
+  try {
+    const result = await api('/user/review/list', { shopId, page: 1, pageSize: 20 });
+    const list = result.records;
+    if (!list.length) { box.innerHTML = '<div class="empty">还没有评价</div>'; return; }
+    box.innerHTML = list.map(r => `
+      <div class="review-item">
+        <div class="head"><span>${esc(r.userName || '匿名用户')} · 订单 ${esc(r.orderNumber || '')}</span><span>${esc(r.createTime || '')}</span></div>
+        <div class="stars">${stars(r.rating)}</div>
+        <div>${esc(r.content || '（未填写文字评价）')}</div>
+        ${r.reply ? `<div class="reply"><b>商家回复：</b>${esc(r.reply)}</div>` : ''}
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
+  }
+}
+
+// ---------------- 通用请求 / 弹窗 ----------------
+async function apiReq(method, path, body){
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['authentication'] = token;
+  const resp = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  if (resp.status === 401) throw new Error('未登录或token已过期，请在顶部登录');
+  const data = await resp.json();
+  if (data.code !== 1) throw new Error(data.msg || '请求失败');
+  return data.data;
+}
+function apiPost(path, body){ return apiReq('POST', path, body); }
+function apiPut(path, body){ return apiReq('PUT', path, body); }
+function apiDelete(path){ return apiReq('DELETE', path); }
+
+function openModal(title){
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalOverlay').classList.add('active');
+}
+function closeModal(){
+  document.getElementById('modalOverlay').classList.remove('active');
+}
+document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+document.getElementById('modalOverlay').addEventListener('click', (ev) => {
+  if (ev.target.id === 'modalOverlay') closeModal();
+});
+
+// ---------------- 购物车 ----------------
+async function refreshCartBadge(){
+  const badge = document.getElementById('cartBadge');
+  if (!token) { badge.style.display = 'none'; return; }
+  try {
+    const list = await api('/user/shoppingCart/list');
+    const count = list.reduce((sum, item) => sum + item.number, 0);
+    if (count > 0) { badge.textContent = count; badge.style.display = 'inline-block'; }
+    else { badge.style.display = 'none'; }
+  } catch (e) { /* 未登录等情况忽略 */ }
+}
+
+async function addToCart(dishId, shopId){
+  try {
+    await apiPost('/user/shoppingCart/add', { dishId, shopId });
+    refreshCartBadge();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function renderCart(){
+  const body = document.getElementById('modalBody');
+  body.innerHTML = '加载中...';
+  try {
+    const list = await api('/user/shoppingCart/list');
+    if (!list.length) { body.innerHTML = '<div class="empty">购物车是空的</div>'; return; }
+    const total = list.reduce((sum, item) => sum + item.amount * item.number, 0);
+    body.innerHTML = list.map(item => `
+      <div class="cart-row">
+        <div class="name">${esc(item.name)}<div style="color:var(--muted);">￥${item.amount} x ${item.number}</div></div>
+        <div class="qty">
+          <button class="qty-btn" onclick="changeCartQty(${item.dishId || 'null'}, ${item.setmealId || 'null'}, ${item.shopId}, -1)">-</button>
+          ${item.number}
+          <button class="qty-btn" onclick="changeCartQty(${item.dishId || 'null'}, ${item.setmealId || 'null'}, ${item.shopId}, 1)">+</button>
+        </div>
+      </div>`).join('')
+      + `<div class="cart-total"><span>合计：￥${total.toFixed(2)}</span><button class="primary-btn" onclick="openCheckout()">去结算</button></div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
+  }
+}
+
+async function changeCartQty(dishId, setmealId, shopId, delta){
+  try {
+    const payload = { dishId: dishId || undefined, setmealId: setmealId || undefined, shopId };
+    await apiPost('/user/shoppingCart/' + (delta > 0 ? 'add' : 'sub'), payload);
+    renderCart();
+    refreshCartBadge();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+document.getElementById('cartBtn').addEventListener('click', () => {
+  openModal('购物车');
+  renderCart();
+});
+
+// ---------------- 地址管理 ----------------
+function addressFormHtml(){
+  return `
+    <div class="addr-form">
+      <input id="addrConsignee" placeholder="收货人">
+      <input id="addrPhone" placeholder="手机号">
+      <input id="addrProvince" placeholder="省">
+      <input id="addrCity" placeholder="市">
+      <input id="addrDistrict" placeholder="区">
+      <input id="addrDetail" class="full" placeholder="详细地址">
+    </div>
+    <button class="primary-btn" style="margin-top:10px;" onclick="saveAddress()">保存地址</button>`;
+}
+
+async function saveAddress(){
+  const consignee = document.getElementById('addrConsignee').value.trim();
+  const phone = document.getElementById('addrPhone').value.trim();
+  const detail = document.getElementById('addrDetail').value.trim();
+  if (!consignee || !phone || !detail) { alert('收货人、手机号、详细地址为必填'); return; }
+  try {
+    await apiPost('/user/addressBook', {
+      consignee, phone,
+      provinceName: document.getElementById('addrProvince').value.trim(),
+      cityName: document.getElementById('addrCity').value.trim(),
+      districtName: document.getElementById('addrDistrict').value.trim(),
+      detail
+    });
+    if (pendingCheckout) { openCheckout(); } else { renderAddresses(); }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function setDefaultAddress(id){
+  try { await apiPut('/user/addressBook/default', { id, isDefault: 1 }); renderAddresses(); }
+  catch (e) { alert(e.message); }
+}
+async function deleteAddress(id){
+  if (!confirm('确定删除这个地址吗？')) return;
+  try { await apiDelete('/user/addressBook?id=' + id); renderAddresses(); }
+  catch (e) { alert(e.message); }
+}
+
+async function renderAddresses(){
+  const body = document.getElementById('modalBody');
+  body.innerHTML = '加载中...';
+  try {
+    const list = await api('/user/addressBook/list');
+    let html = list.length ? list.map(a => `
+      <div class="addr-item">
+        <div class="head"><span>${esc(a.consignee)} ${esc(a.phone)}${a.isDefault === 1 ? '<span class="default-tag">默认</span>' : ''}</span></div>
+        <div>${esc(a.provinceName || '')}${esc(a.cityName || '')}${esc(a.districtName || '')}${esc(a.detail || '')}</div>
+        <div class="ops">
+          ${a.isDefault === 1 ? '' : `<button class="danger-link" style="color:var(--accent);" onclick="setDefaultAddress(${a.id})">设为默认</button>`}
+          <button class="danger-link" onclick="deleteAddress(${a.id})">删除</button>
+        </div>
+      </div>`).join('') : '<div class="empty">还没有收货地址</div>';
+    html += addressFormHtml();
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
+  }
+}
+
+document.getElementById('addrBtn').addEventListener('click', () => {
+  pendingCheckout = false;
+  openModal('我的地址');
+  renderAddresses();
+});
+
+// ---------------- 结算下单 ----------------
+let pendingCheckout = false;
+
+async function openCheckout(){
+  pendingCheckout = true;
+  openModal('确认下单');
+  const body = document.getElementById('modalBody');
+  body.innerHTML = '加载中...';
+  try {
+    const [cart, addresses] = await Promise.all([
+      api('/user/shoppingCart/list'),
+      api('/user/addressBook/list')
+    ]);
+    if (!cart.length) { body.innerHTML = '<div class="empty">购物车是空的</div>'; return; }
+    const total = cart.reduce((sum, item) => sum + item.amount * item.number, 0);
+    let html = `<div style="margin-bottom:10px;color:var(--muted);">共 ${cart.reduce((s,i)=>s+i.number,0)} 件商品，合计 ￥${total.toFixed(2)}</div>`;
+    if (!addresses.length) {
+      html += '<div class="empty">请先添加一个收货地址</div>' + addressFormHtml();
+    } else {
+      html += '<div style="font-weight:600;margin-bottom:6px;">选择收货地址</div>';
+      html += addresses.map(a => `
+        <label class="addr-item" style="display:block;cursor:pointer;">
+          <input type="radio" name="checkoutAddr" value="${a.id}" ${a.isDefault === 1 ? 'checked' : ''}>
+          ${esc(a.consignee)} ${esc(a.phone)} · ${esc(a.provinceName || '')}${esc(a.cityName || '')}${esc(a.districtName || '')}${esc(a.detail || '')}
+        </label>`).join('');
+      html += `<button class="primary-btn" style="margin-top:10px;width:100%;" onclick="submitOrder(${total})">提交订单（￥${total.toFixed(2)}）</button>`;
+    }
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
+  }
+}
+
+async function submitOrder(total){
+  const checked = document.querySelector('input[name="checkoutAddr"]:checked');
+  if (!checked) { alert('请选择收货地址'); return; }
+  try {
+    const submitResult = await apiPost('/user/order/submit', {
+      addressBookId: Number(checked.value),
+      payMethod: 1,
+      remark: '',
+      deliveryStatus: 1,
+      tablewareNumber: 1,
+      tablewareStatus: 1,
+      packAmount: 0,
+      amount: total
+    });
+    // 本环境未接入真实微信支付，下单后直接调用支付接口把订单标记为已支付，方便走完后续流程
+    await apiPut('/user/order/payment', { orderNumber: submitResult.orderNumber, payMethod: 1 });
+    pendingCheckout = false;
+    closeModal();
+    refreshCartBadge();
+    alert('下单成功！订单号：' + submitResult.orderNumber);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// ---------------- 我的订单 ----------------
+const ORDER_STATUS_TEXT = {1:'待付款', 2:'待接单', 3:'已接单', 4:'派送中', 5:'已完成', 6:'已取消'};
+
+async function renderOrders(){
+  const body = document.getElementById('modalBody');
+  body.innerHTML = '加载中...';
+  try {
+    const result = await api('/user/order/historyOrders', { page: 1, pageSize: 20 });
+    const list = result.records;
+    if (!list.length) { body.innerHTML = '<div class="empty">还没有订单</div>'; return; }
+    body.innerHTML = list.map(o => `
+      <div class="order-item">
+        <div class="head"><span>订单号 ${esc(o.number)}</span><span>${esc(o.orderTime || '')}</span></div>
+        <div>￥${o.amount} <span class="order-status">${ORDER_STATUS_TEXT[o.status] || o.status}</span></div>
+        ${(o.status === 1 || o.status === 2) ? `<button class="danger-link" style="margin-top:6px;" onclick="cancelOrder(${o.id})">取消订单</button>` : ''}
+        ${o.status === 5 ? `<button class="danger-link" style="margin-top:6px;color:var(--accent);" onclick="toggleReviewForm(${o.id}, this)">评价</button>` : ''}
+      </div>`).join('');
+  } catch (e) {
+    body.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
+  }
+}
+
+async function cancelOrder(id){
+  if (!confirm('确定取消这个订单吗？')) return;
+  try { await apiPut('/user/order/cancel/' + id, {}); renderOrders(); }
+  catch (e) { alert(e.message); }
+}
+
+// ---------------- 订单评价 ----------------
+let reviewRatings = {};
+function reviewFormHtml(orderId){
+  return `<div class="review-form" id="reviewForm-${orderId}">
+      <div class="stars-input" id="starsInput-${orderId}">${[1,2,3,4,5].map(n => `<span class="star-choice" data-n="${n}" onclick="setReviewRating(${orderId}, ${n})">☆</span>`).join('')}</div>
+      <textarea id="reviewContent-${orderId}" placeholder="说说你的体验吧（可留空）" style="width:100%;margin-top:6px;"></textarea>
+      <button class="primary-btn" style="margin-top:6px;" onclick="submitReview(${orderId})">提交评价</button>
+    </div>`;
+}
+function setReviewRating(orderId, n){
+  reviewRatings[orderId] = n;
+  document.querySelectorAll(`#starsInput-${orderId} .star-choice`).forEach(el => {
+    el.textContent = Number(el.dataset.n) <= n ? '★' : '☆';
+  });
+}
+function toggleReviewForm(orderId, btn){
+  const container = btn.closest('.order-item');
+  const existing = container.querySelector('.review-form');
+  if (existing) { existing.remove(); return; }
+  container.insertAdjacentHTML('beforeend', reviewFormHtml(orderId));
+}
+async function submitReview(orderId){
+  const rating = reviewRatings[orderId];
+  if (!rating) { alert('请先选择星级'); return; }
+  const content = document.getElementById('reviewContent-' + orderId).value.trim();
+  try {
+    await apiPost('/user/review/submit', { orderId, rating, content });
+    document.getElementById('reviewForm-' + orderId).outerHTML = '<div style="color:var(--ok);margin-top:6px;">评价已提交，感谢！</div>';
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+document.getElementById('ordersBtn').addEventListener('click', () => {
+  openModal('我的订单');
+  renderOrders();
+});
+
+// ---------------- AI客服 ----------------
+let aiConversationId = null;
+
+function appendAiBubble(role, text){
+  const box = document.getElementById('aiMessages');
+  const div = document.createElement('div');
+  div.className = 'ai-bubble ' + role;
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+
+document.getElementById('aiFab').addEventListener('click', () => {
+  document.getElementById('aiPanel').classList.add('active');
+  if (!document.getElementById('aiMessages').children.length) {
+    appendAiBubble('assistant', '你好，我是 Sky Take Out 客服助手，有什么可以帮你的？');
+  }
+});
+document.getElementById('aiCloseBtn').addEventListener('click', () => {
+  document.getElementById('aiPanel').classList.remove('active');
+});
+
+async function sendAiMessage(){
+  const input = document.getElementById('aiInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  appendAiBubble('user', text);
+  const pending = appendAiBubble('pending', 'AI思考中...');
+  try {
+    const result = await apiPost('/user/ai/chat', { conversationId: aiConversationId, message: text });
+    aiConversationId = result.conversationId;
+    pending.remove();
+    appendAiBubble('assistant', result.reply);
+  } catch (e) {
+    pending.remove();
+    appendAiBubble('assistant', '出错了：' + e.message);
+  }
+}
+document.getElementById('aiSendBtn').addEventListener('click', sendAiMessage);
+document.getElementById('aiInput').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') sendAiMessage();
+});
+
+// ---------------- boot ----------------
+loadShops('');
+refreshCartBadge();
+</script>
+</body>
+</html>

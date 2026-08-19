@@ -7,6 +7,7 @@ import com.sky.entity.Shop;
 import com.sky.enumeration.OperationType;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
@@ -19,9 +20,9 @@ public interface ShopMapper {
      *
      * @param shop
      */
-    @Insert("insert into shop(name, address, phone, status, create_time, update_time, create_user, update_user)" +
+    @Insert("insert into shop(name, address, phone, status, business_type, secondary_business_type, business_type_updated_at, create_time, update_time, create_user, update_user)" +
             " VALUES" +
-            " (#{name}, #{address}, #{phone}, #{status}, #{createTime}, #{updateTime}, #{createUser}, #{updateUser})")
+            " (#{name}, #{address}, #{phone}, #{status}, #{businessType}, #{secondaryBusinessType}, #{businessTypeUpdatedAt}, #{createTime}, #{updateTime}, #{createUser}, #{updateUser})")
     @AutoFill(OperationType.INSERT)
     void insert(Shop shop);
 
@@ -51,10 +52,10 @@ public interface ShopMapper {
     Shop getById(Long id);
 
     /**
-     * 查询所有启用中的店铺（供用户端选店铺使用）
+     * 查询所有启用中的店铺（供用户端选店铺使用），businessType非空时按主营业类型或副营业类型过滤
      *
+     * @param businessType
      * @return
      */
-    @Select("select * from shop where status = 1 order by id")
-    List<Shop> listActive();
+    List<Shop> listActive(@Param("businessType") Integer businessType);
 }

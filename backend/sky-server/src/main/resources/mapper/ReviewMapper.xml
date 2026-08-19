@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.sky.mapper.ReviewMapper">
+
+    <select id="pageQuery" resultType="com.sky.vo.ReviewVO">
+        select
+            r.id, r.order_id, o.number as orderNumber, r.shop_id, r.user_id,
+            u.name as userName, u.avatar as userAvatar,
+            r.rating, r.content, r.images, r.reply, r.reply_time, r.create_time
+        from review r
+        left join user u on r.user_id = u.id
+        left join orders o on r.order_id = o.id
+        <where>
+            <if test="shopId != null">
+                and r.shop_id = #{shopId}
+            </if>
+            <if test="rating != null">
+                and r.rating = #{rating}
+            </if>
+        </where>
+        order by r.create_time desc
+    </select>
+
+    <update id="updateReply">
+        update review
+        set reply = #{reply}, reply_time = #{replyTime}
+        where id = #{id} and shop_id = #{shopId}
+    </update>
+
+    <select id="getShopRatingSummary" resultType="com.sky.vo.ShopRatingSummaryVO">
+        select avg(rating) as avgRating, count(*) as reviewCount
+        from review
+        where shop_id = #{shopId}
+    </select>
+
+</mapper>

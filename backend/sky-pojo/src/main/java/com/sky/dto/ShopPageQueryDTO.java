@@ -19,4 +19,7 @@ public class ShopPageQueryDTO implements Serializable {
     //状态 0:禁用 1:启用
     private Integer status;
 
+    //主营业类型 1=餐饮 2=医药 3=蔬果 4=花卉
+    private Integer businessType;
+
 }
