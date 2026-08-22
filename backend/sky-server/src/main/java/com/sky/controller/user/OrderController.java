@@ -1,7 +1,9 @@
 package com.sky.controller.user;
 
+import com.sky.annotation.RateLimit;
 import com.sky.dto.OrdersPaymentDTO;
 import com.sky.dto.OrdersSubmitDTO;
+import com.sky.enumeration.RateLimitKeyType;
 import com.sky.result.PageResult;
 import com.sky.result.Result;
 import com.sky.service.OrderService;
@@ -38,6 +40,8 @@ public class OrderController {
      */
     @PostMapping("/submit")
     @ApiOperation("用户下单")
+    @RateLimit(keyType = RateLimitKeyType.ACCOUNT, limit = 20, windowSeconds = 60, name = "order_submit",
+            message = "下单过于频繁，请稍后再试")
     public Result<OrderSubmitVO> submit(@RequestBody OrdersSubmitDTO ordersSubmitDTO) {
         log.info("用户下单: {}", ordersSubmitDTO);
         OrderSubmitVO orderSubmitVO = orderService.submit(ordersSubmitDTO);

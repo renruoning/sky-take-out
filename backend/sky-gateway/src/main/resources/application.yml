@@ -1,0 +1,27 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: sky-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+    gateway:
+      routes:
+        # AI客服拆出去的独立服务，这条更具体的规则必须排在下面的兜底规则前面——
+        # Gateway按声明顺序匹配路由，先匹配上的生效
+        - id: sky-ai-service
+          uri: lb://sky-ai-service
+          predicates:
+            - Path=/user/ai/**
+        # 其余所有流量（/admin/**、/user/**其它路径、/notify/**、/ws/**）走单体sky-server
+        - id: sky-server
+          uri: lb://sky-server
+          predicates:
+            - Path=/**
+
+logging:
+  level:
+    org.springframework.cloud.gateway: info

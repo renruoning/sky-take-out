@@ -1,7 +1,9 @@
 package com.sky.controller.user;
 
+import com.sky.annotation.RateLimit;
 import com.sky.dto.ReviewDTO;
 import com.sky.dto.ReviewPageQueryDTO;
+import com.sky.enumeration.RateLimitKeyType;
 import com.sky.result.PageResult;
 import com.sky.result.Result;
 import com.sky.service.ReviewService;
@@ -33,6 +35,8 @@ public class ReviewController {
      */
     @PostMapping("/submit")
     @ApiOperation("提交订单评价")
+    @RateLimit(keyType = RateLimitKeyType.ACCOUNT, limit = 5, windowSeconds = 60, name = "review_submit",
+            message = "评价提交过于频繁，请稍后再试")
     public Result submit(@RequestBody ReviewDTO reviewDTO) {
         log.info("提交订单评价: {}", reviewDTO);
         reviewService.submit(reviewDTO);

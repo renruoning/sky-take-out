@@ -1,5 +1,7 @@
 package com.sky.controller.admin;
 
+import com.sky.annotation.RateLimit;
+import com.sky.enumeration.RateLimitKeyType;
 import com.sky.service.ReportService;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -31,6 +33,8 @@ public class ExportController {
      */
     @GetMapping("/export")
     @ApiOperation("导出最近30天运营数据Excel报表")
+    @RateLimit(keyType = RateLimitKeyType.ACCOUNT, limit = 5, windowSeconds = 60, name = "report_export",
+            message = "导出过于频繁，请稍后再试")
     public void export(HttpServletResponse response) {
         reportService.exportOperatingData(response);
     }

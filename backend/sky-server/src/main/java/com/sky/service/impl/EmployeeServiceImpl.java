@@ -15,8 +15,10 @@ import com.sky.exception.AccountNotFoundException;
 import com.sky.exception.PasswordErrorException;
 import com.sky.exception.ShopBusinessException;
 import com.sky.mapper.EmployeeMapper;
+import com.sky.properties.SecurityProperties;
 import com.sky.result.PageResult;
 import com.sky.service.EmployeeService;
+import com.sky.utils.FieldCryptoUtil;
 
 import java.util.List;
 
@@ -28,9 +30,24 @@ import org.springframework.util.DigestUtils;
 public class EmployeeServiceImpl implements EmployeeService {
 
     private final EmployeeMapper employeeMapper;
+    private final SecurityProperties securityProperties;
 
-    EmployeeServiceImpl(EmployeeMapper employeeMapper) {
+    EmployeeServiceImpl(EmployeeMapper employeeMapper, SecurityProperties securityProperties) {
         this.employeeMapper = employeeMapper;
+        this.securityProperties = securityProperties;
+    }
+
+    private void encryptSensitiveFields(Employee employee) {
+        employee.setPhone(FieldCryptoUtil.encrypt(employee.getPhone(), securityProperties.getFieldEncryptionKey()));
+        employee.setIdNumber(FieldCryptoUtil.encrypt(employee.getIdNumber(), securityProperties.getFieldEncryptionKey()));
+    }
+
+    private void decryptSensitiveFields(Employee employee) {
+        if (employee == null) {
+            return;
+        }
+        employee.setPhone(FieldCryptoUtil.decrypt(employee.getPhone(), securityProperties.getFieldEncryptionKey()));
+        employee.setIdNumber(FieldCryptoUtil.decrypt(employee.getIdNumber(), securityProperties.getFieldEncryptionKey()));
     }
 
     /**
@@ -95,6 +112,7 @@ public class EmployeeServiceImpl implements EmployeeService {
             throw new ShopBusinessException(MessageConstant.PLATFORM_MUST_SPECIFY_SHOP);
         }
 
+        encryptSensitiveFields(employee);
         employeeMapper.insert(employee);
     }
 
@@ -113,6 +131,7 @@ public class EmployeeServiceImpl implements EmployeeService {
 
         long total = page.getTotal(); // 获取总记录数
         List<Employee> records = page.getResult(); // 获取当前页的记录列表
+        records.forEach(this::decryptSensitiveFields);
         return new PageResult(total, records); // 返回分页结果
     }
 
@@ -148,6 +167,7 @@ public class EmployeeServiceImpl implements EmployeeService {
             return null;
         }
         employee.setPassword("****"); // 不返回密码信息
+        decryptSensitiveFields(employee);
         return employee;
     }
 
@@ -161,6 +181,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         Employee employee = new Employee();
         BeanUtils.copyProperties(employeeDTO, employee);
         employee.setShopId(BaseContext.getCurrentShopId());
+        encryptSensitiveFields(employee);
         employeeMapper.update(employee);
     }
 }

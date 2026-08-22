@@ -584,6 +584,7 @@ async function renderOrders(){
         <div>￥${o.amount} <span class="order-status">${ORDER_STATUS_TEXT[o.status] || o.status}</span></div>
         ${(o.status === 1 || o.status === 2) ? `<button class="danger-link" style="margin-top:6px;" onclick="cancelOrder(${o.id})">取消订单</button>` : ''}
         ${o.status === 5 ? `<button class="danger-link" style="margin-top:6px;color:var(--accent);" onclick="toggleReviewForm(${o.id}, this)">评价</button>` : ''}
+        ${o.payStatus === 1 ? `<button class="danger-link" style="margin-top:6px;color:var(--accent);" onclick="toggleInvoiceForm(${o.id}, this)">开发票</button>` : ''}
       </div>`).join('');
   } catch (e) {
     body.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
@@ -624,6 +625,45 @@ async function submitReview(orderId){
   try {
     await apiPost('/user/review/submit', { orderId, rating, content });
     document.getElementById('reviewForm-' + orderId).outerHTML = '<div style="color:var(--ok);margin-top:6px;">评价已提交，感谢！</div>';
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// ---------------- 发票 ----------------
+function invoiceFormHtml(orderId){
+  return `<div class="review-form" id="invoiceForm-${orderId}">
+      <div style="display:flex;gap:8px;margin-bottom:6px;">
+        <label style="font-size:12.5px;"><input type="radio" name="invoiceType-${orderId}" value="1" checked onchange="toggleTaxNumberField(${orderId})"> 个人</label>
+        <label style="font-size:12.5px;"><input type="radio" name="invoiceType-${orderId}" value="2" onchange="toggleTaxNumberField(${orderId})"> 单位</label>
+      </div>
+      <input id="invoiceTitle-${orderId}" placeholder="发票抬头（姓名或单位名称）" style="width:100%;margin-bottom:6px;">
+      <input id="invoiceTaxNumber-${orderId}" placeholder="纳税人识别号" style="width:100%;margin-bottom:6px;display:none;">
+      <input id="invoiceEmail-${orderId}" placeholder="接收邮箱（可选）" style="width:100%;margin-bottom:6px;">
+      <button class="primary-btn" onclick="submitInvoice(${orderId})">提交申请</button>
+    </div>`;
+}
+function toggleTaxNumberField(orderId){
+  const type = document.querySelector(`input[name="invoiceType-${orderId}"]:checked`).value;
+  document.getElementById('invoiceTaxNumber-' + orderId).style.display = (type === '2') ? 'block' : 'none';
+}
+function toggleInvoiceForm(orderId, btn){
+  const container = btn.closest('.order-item');
+  const existing = container.querySelector('.review-form');
+  if (existing) { existing.remove(); return; }
+  container.insertAdjacentHTML('beforeend', invoiceFormHtml(orderId));
+}
+async function submitInvoice(orderId){
+  const invoiceType = Number(document.querySelector(`input[name="invoiceType-${orderId}"]:checked`).value);
+  const title = document.getElementById('invoiceTitle-' + orderId).value.trim();
+  const taxNumber = document.getElementById('invoiceTaxNumber-' + orderId).value.trim();
+  const email = document.getElementById('invoiceEmail-' + orderId).value.trim();
+  if (!title) { alert('请填写发票抬头'); return; }
+  if (invoiceType === 2 && !taxNumber) { alert('单位抬头必须填写纳税人识别号'); return; }
+  try {
+    const invoice = await apiPost('/user/invoice/apply', { orderId, title, invoiceType, taxNumber, email });
+    document.getElementById('invoiceForm-' + orderId).outerHTML =
+      `<div style="color:var(--ok);margin-top:6px;">发票已开具。<a href="invoice.html?id=${invoice.id}" target="_blank">查看/打印发票</a></div>`;
   } catch (e) {
     alert(e.message);
   }

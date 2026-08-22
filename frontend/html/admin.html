@@ -463,6 +463,53 @@ function doLogout(){
   localStorage.removeItem(WHO_KEY);
   document.getElementById('app').style.display = 'none';
   document.getElementById('loginView').style.display = 'flex';
+  disconnectWebSocket();
+}
+
+// ---------------- websocket：来单提醒 / 客户催单 ----------------
+let ws = null;
+let wsShouldReconnect = false;
+let wsReconnectTimer = null;
+let wsHeartbeatTimer = null;
+const wsSid = 'admin-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+
+function connectWebSocket(){
+  if (!token) return;
+  wsShouldReconnect = true;
+  const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  ws = new WebSocket(scheme + location.host + '/ws/' + wsSid + '?token=' + encodeURIComponent(token));
+
+  ws.addEventListener('open', () => {
+    clearInterval(wsHeartbeatTimer);
+    wsHeartbeatTimer = setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send('heartbeat'); }, 25000);
+  });
+
+  ws.addEventListener('message', (evt) => {
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch (e) { return; }
+    if (msg.type === 1) {
+      toast('新订单提醒：' + (msg.content || ''), true);
+    } else if (msg.type === 2) {
+      toast('客户催单：' + (msg.content || ''), false);
+    }
+    const orderView = document.getElementById('view-order');
+    if (orderView && orderView.classList.contains('active')) loadOrders();
+  });
+
+  ws.addEventListener('close', () => {
+    clearInterval(wsHeartbeatTimer);
+    if (wsShouldReconnect) {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+    }
+  });
+}
+
+function disconnectWebSocket(){
+  wsShouldReconnect = false;
+  clearTimeout(wsReconnectTimer);
+  clearInterval(wsHeartbeatTimer);
+  if (ws) { ws.close(); ws = null; }
 }
 document.getElementById('logoutBtn').addEventListener('click', () => {
   api('POST', '/admin/employee/logout').catch(() => {});
@@ -477,6 +524,7 @@ function enterApp(){
   switchView('category');
   loadCategoryTypeOptionsIntoFilters();
   loadCategories();
+  connectWebSocket();
 }
 
 // ---------------- nav ----------------

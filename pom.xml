@@ -16,6 +16,8 @@
         <module>backend/sky-common</module>
         <module>backend/sky-pojo</module>
         <module>backend/sky-server</module>
+        <module>backend/sky-ai-service</module>
+        <module>backend/sky-gateway</module>
     </modules>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -24,6 +26,10 @@
         <maven.compiler.release>17</maven.compiler.release>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+        <!-- P4第一步：AI客服拆成独立微服务，Nacos做注册中心、Spring Cloud Gateway做统一入口。
+             版本搭配跟着官方兼容矩阵走：Spring Boot 2.7.x <-> Spring Cloud 2021.0.x <-> Spring Cloud Alibaba 2021.0.5.0 -->
+        <spring-cloud.version>2021.0.8</spring-cloud.version>
+        <spring-cloud-alibaba.version>2021.0.5.0</spring-cloud-alibaba.version>
         <mybatis.spring>2.2.0</mybatis.spring>
         <lombok>1.18.36</lombok>
         <fastjson>1.2.76</fastjson>
@@ -59,6 +65,21 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <dependency>
                 <groupId>org.mybatis.spring.boot</groupId>
                 <artifactId>mybatis-spring-boot-starter</artifactId>

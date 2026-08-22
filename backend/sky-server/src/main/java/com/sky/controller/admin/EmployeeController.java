@@ -1,10 +1,12 @@
 package com.sky.controller.admin;
 
+import com.sky.annotation.RateLimit;
 import com.sky.constant.JwtClaimsConstant;
 import com.sky.dto.EmployeeDTO;
 import com.sky.dto.EmployeeLoginDTO;
 import com.sky.dto.EmployeePageQueryDTO;
 import com.sky.entity.Employee;
+import com.sky.enumeration.RateLimitKeyType;
 import com.sky.properties.JwtProperties;
 import com.sky.result.PageResult;
 import com.sky.result.Result;
@@ -51,6 +53,8 @@ public class EmployeeController {
      */
     @PostMapping("/login")
     @ApiOperation("员工登录接口")
+    @RateLimit(keyType = RateLimitKeyType.IP, limit = 10, windowSeconds = 60, name = "admin_login",
+            message = "登录尝试过于频繁，请稍后再试")
     public Result<EmployeeLoginVO> login(@RequestBody EmployeeLoginDTO employeeLoginDTO) {
         log.info("员工登录：{}", employeeLoginDTO);
 

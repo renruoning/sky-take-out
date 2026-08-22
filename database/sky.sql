@@ -48,7 +48,7 @@ CREATE TABLE `address_book` (
   `user_id` bigint NOT NULL COMMENT '用户id',
   `consignee` varchar(50) COLLATE utf8_bin DEFAULT NULL COMMENT '收货人',
   `sex` varchar(2) COLLATE utf8_bin DEFAULT NULL COMMENT '性别',
-  `phone` varchar(11) COLLATE utf8_bin NOT NULL COMMENT '手机号',
+  `phone` varchar(255) COLLATE utf8_bin NOT NULL COMMENT '手机号（应用层加密存储）',
   `province_code` varchar(12) CHARACTER SET utf8mb4  DEFAULT NULL COMMENT '省级区划编号',
   `province_name` varchar(32) CHARACTER SET utf8mb4  DEFAULT NULL COMMENT '省级名称',
   `city_code` varchar(12) CHARACTER SET utf8mb4  DEFAULT NULL COMMENT '市级区划编号',
@@ -211,9 +211,9 @@ CREATE TABLE `employee` (
   `name` varchar(32) COLLATE utf8_bin NOT NULL COMMENT '姓名',
   `username` varchar(32) COLLATE utf8_bin NOT NULL COMMENT '用户名',
   `password` varchar(64) COLLATE utf8_bin NOT NULL COMMENT '密码',
-  `phone` varchar(11) COLLATE utf8_bin NOT NULL COMMENT '手机号',
+  `phone` varchar(255) COLLATE utf8_bin NOT NULL COMMENT '手机号（应用层加密存储）',
   `sex` varchar(2) COLLATE utf8_bin NOT NULL COMMENT '性别',
-  `id_number` varchar(18) COLLATE utf8_bin NOT NULL COMMENT '身份证号',
+  `id_number` varchar(255) COLLATE utf8_bin NOT NULL COMMENT '身份证号（应用层加密存储）',
   `status` int NOT NULL DEFAULT '1' COMMENT '状态 0:禁用，1:启用',
   `create_time` datetime DEFAULT NULL COMMENT '创建时间',
   `update_time` datetime DEFAULT NULL COMMENT '更新时间',
@@ -296,27 +296,26 @@ CREATE TABLE `setmeal` (
   UNIQUE KEY `idx_setmeal_shop_name` (`shop_id`, `name`)
 ) ENGINE=InnoDB AUTO_INCREMENT=32 DEFAULT CHARSET=utf8mb3 COLLATE=utf8_bin COMMENT='套餐';
 
-DROP TABLE IF EXISTS `ai_conversation`;
-CREATE TABLE `ai_conversation` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `user_id` bigint NOT NULL COMMENT '用户id',
-  `title` varchar(50) DEFAULT NULL COMMENT '会话标题，取自第一条用户消息的前若干字',
-  `create_time` datetime DEFAULT NULL COMMENT '创建时间',
-  `update_time` datetime DEFAULT NULL COMMENT '更新时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_ai_conversation_user_id` (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI客服会话';
+-- ai_conversation / ai_message 已经不在这个库里了：P4第一步把AI客服拆成了独立的sky-ai-service服务，
+-- 这两张表连同数据整体搬到了独立的sky_ai_service库（见database/sky_ai_service.sql和
+-- database/migration_split_ai_service_db.sql），不是死代码遗留、是故意的边界收敛。
 
-DROP TABLE IF EXISTS `ai_message`;
-CREATE TABLE `ai_message` (
+DROP TABLE IF EXISTS `invoice`;
+CREATE TABLE `invoice` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `conversation_id` bigint NOT NULL COMMENT '所属会话id',
-  `role` varchar(16) NOT NULL COMMENT 'user 或 assistant',
-  `content` text NOT NULL COMMENT '消息内容',
-  `create_time` datetime DEFAULT NULL COMMENT '发送时间',
+  `order_id` bigint NOT NULL COMMENT '关联订单，一单只能开一张发票',
+  `user_id` bigint NOT NULL COMMENT '申请人',
+  `shop_id` bigint NOT NULL COMMENT '冗余存储店铺id',
+  `title` varchar(100) NOT NULL COMMENT '发票抬头',
+  `invoice_type` tinyint NOT NULL COMMENT '抬头类型 1个人 2单位',
+  `tax_number` varchar(32) DEFAULT NULL COMMENT '纳税人识别号，单位抬头必填',
+  `email` varchar(100) DEFAULT NULL COMMENT '接收邮箱，可选',
+  `amount` decimal(10,2) NOT NULL COMMENT '冗余存订单金额',
+  `create_time` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
-  KEY `idx_ai_message_conversation_id` (`conversation_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI客服消息记录';
+  UNIQUE KEY `idx_invoice_order_id` (`order_id`),
+  KEY `idx_invoice_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='发票申请';
 
 DROP TABLE IF EXISTS `setmeal_dish`;
 CREATE TABLE `setmeal_dish` (
@@ -331,22 +330,8 @@ CREATE TABLE `setmeal_dish` (
   KEY `idx_setmeal_dish_dish_id` (`dish_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=47 DEFAULT CHARSET=utf8mb3 COLLATE=utf8_bin COMMENT='套餐菜品关系';
 
-DROP TABLE IF EXISTS `shopping_cart`;
-CREATE TABLE `shopping_cart` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `shop_id` bigint NOT NULL COMMENT '所属店铺id',
-  `name` varchar(32) COLLATE utf8_bin DEFAULT NULL COMMENT '商品名称',
-  `image` varchar(255) COLLATE utf8_bin DEFAULT NULL COMMENT '图片',
-  `user_id` bigint NOT NULL COMMENT '主键',
-  `dish_id` bigint DEFAULT NULL COMMENT '菜品id',
-  `setmeal_id` bigint DEFAULT NULL COMMENT '套餐id',
-  `dish_flavor` varchar(50) COLLATE utf8_bin DEFAULT NULL COMMENT '口味',
-  `number` int NOT NULL DEFAULT '1' COMMENT '数量',
-  `amount` decimal(10,2) NOT NULL COMMENT '金额',
-  `create_time` datetime DEFAULT NULL COMMENT '创建时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_shopping_cart_user_id` (`user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb3 COLLATE=utf8_bin COMMENT='购物车';
+-- 购物车已经迁移到Redis（见 TODO.md P1，ShoppingCartServiceImpl 用 Redis Hash 存储），
+-- 不再需要 shopping_cart 这张MySQL表，新装库不会创建它。
 
 DROP TABLE IF EXISTS `user`;
 CREATE TABLE `user` (

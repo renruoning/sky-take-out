@@ -39,5 +39,14 @@ public class MessageConstant {
     public static final String REVIEW_NOT_FOUND = "评价不存在";
     public static final String AI_CONVERSATION_NOT_FOUND = "会话不存在";
     public static final String AI_SERVICE_UNAVAILABLE = "AI服务暂时不可用，请稍后再试";
+    public static final String INVOICE_ORDER_NOT_OWNED = "只能为自己的订单申请发票";
+    public static final String INVOICE_ORDER_NOT_PAID = "订单尚未支付，暂不能申请发票";
+    public static final String INVOICE_ALREADY_EXISTS = "该订单已申请过发票";
+    public static final String INVOICE_NOT_FOUND = "发票不存在";
+    public static final String INVOICE_TAX_NUMBER_REQUIRED = "单位抬头必须填写纳税人识别号";
+    public static final String ORDER_SUBMIT_DUPLICATE = "请勿重复提交订单";
+    public static final String ORDER_ALREADY_PAID = "订单已支付，请勿重复支付";
+    public static final String AI_CHAT_RATE_LIMITED = "消息发送过于频繁，请稍后再试";
+    public static final String WEBSOCKET_AUTH_FAILED = "WebSocket连接鉴权失败";
 
 }

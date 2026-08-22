@@ -1,11 +1,18 @@
 package com.sky.service.impl;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import com.alibaba.fastjson.JSON;
 import com.sky.constant.MessageConstant;
 import com.sky.context.BaseContext;
 import com.sky.dto.ShoppingCartDTO;
@@ -15,18 +22,31 @@ import com.sky.entity.ShoppingCart;
 import com.sky.exception.ShoppingCartBusinessException;
 import com.sky.mapper.DishMapper;
 import com.sky.mapper.SetmealMapper;
-import com.sky.mapper.ShoppingCartMapper;
 import com.sky.service.ShoppingCartService;
 
+/**
+ * 购物车存Redis Hash，不再落MySQL：高频写、可以容忍丢失、天然需要TTL过期，这几个特征
+ * 决定了购物车更适合Redis而不是关系型数据库（跟菜单缓存的道理类似但更彻底——菜单是缓存，
+ * 购物车这里直接就是唯一数据源了）。
+ * <p>
+ * key: shopping_cart:{userId}，field: 按dishId/setmealId/dishFlavor算出的稳定标识，value: 整行JSON。
+ * 每次写操作后刷新一次整个key的TTL，实现"多久不动购物车就自动清空"，不需要额外的定时清理任务。
+ * <p>
+ * 这个功能现在完全依赖Redis可用——不像P0那些"Redis挂了就降级"的场景，购物车没有MySQL兜底，
+ * Redis不可用时购物车功能本身就不可用，这是迁移到Redis必然带来的取舍，不是遗漏。
+ */
 @Service
 public class ShoppingCartServiceImpl implements ShoppingCartService {
 
-    private final ShoppingCartMapper shoppingCartMapper;
+    private static final String KEY_PREFIX = "shopping_cart:";
+    private static final Duration CART_TTL = Duration.ofDays(7);
+
+    private final StringRedisTemplate stringRedisTemplate;
     private final DishMapper dishMapper;
     private final SetmealMapper setmealMapper;
 
-    ShoppingCartServiceImpl(ShoppingCartMapper shoppingCartMapper, DishMapper dishMapper, SetmealMapper setmealMapper) {
-        this.shoppingCartMapper = shoppingCartMapper;
+    ShoppingCartServiceImpl(StringRedisTemplate stringRedisTemplate, DishMapper dishMapper, SetmealMapper setmealMapper) {
+        this.stringRedisTemplate = stringRedisTemplate;
         this.dishMapper = dishMapper;
         this.setmealMapper = setmealMapper;
     }
@@ -36,29 +56,34 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
      * @param shoppingCartDTO
      */
     public void addShoppingCart(ShoppingCartDTO shoppingCartDTO) {
-        ShoppingCart shoppingCart = new ShoppingCart();
-        BeanUtils.copyProperties(shoppingCartDTO, shoppingCart);
         Long userId = BaseContext.getCurrentId();
-        shoppingCart.setUserId(userId);
+        String key = cartKey(userId);
+        HashOperations<String, String, String> hashOps = stringRedisTemplate.opsForHash();
 
         // 购物车不能同时装多个店铺的商品：若购物车非空且已有商品属于其他店铺，提示先清空
-        List<ShoppingCart> existingCart = shoppingCartMapper.list(ShoppingCart.builder().userId(userId).build());
-        if (existingCart != null && !existingCart.isEmpty()
-                && !existingCart.get(0).getShopId().equals(shoppingCartDTO.getShopId())) {
-            throw new ShoppingCartBusinessException(MessageConstant.SHOPPING_CART_SHOP_CONFLICT);
+        Map<String, String> existing = hashOps.entries(key);
+        if (!existing.isEmpty()) {
+            ShoppingCart any = JSON.parseObject(existing.values().iterator().next(), ShoppingCart.class);
+            if (!any.getShopId().equals(shoppingCartDTO.getShopId())) {
+                throw new ShoppingCartBusinessException(MessageConstant.SHOPPING_CART_SHOP_CONFLICT);
+            }
         }
 
-        // 判断该商品（同一菜品/套餐+同一口味）是否已经在购物车中
-        List<ShoppingCart> list = shoppingCartMapper.list(shoppingCart);
-        if (list != null && !list.isEmpty()) {
+        String field = itemKey(shoppingCartDTO.getDishId(), shoppingCartDTO.getSetmealId(), shoppingCartDTO.getDishFlavor());
+        String existingJson = hashOps.get(key, field);
+        if (existingJson != null) {
             // 已存在，数量加一
-            ShoppingCart existCart = list.get(0);
+            ShoppingCart existCart = JSON.parseObject(existingJson, ShoppingCart.class);
             existCart.setNumber(existCart.getNumber() + 1);
-            shoppingCartMapper.updateNumberById(existCart);
+            hashOps.put(key, field, JSON.toJSONString(existCart));
+            stringRedisTemplate.expire(key, CART_TTL);
             return;
         }
 
-        // 不存在，需要根据是菜品还是套餐查询详情，填充名称、图片、金额后插入一条新记录
+        // 不存在，需要根据是菜品还是套餐查询详情，填充名称、图片、金额后写入
+        ShoppingCart shoppingCart = new ShoppingCart();
+        BeanUtils.copyProperties(shoppingCartDTO, shoppingCart);
+        shoppingCart.setUserId(userId);
         Long dishId = shoppingCartDTO.getDishId();
         if (dishId != null) {
             Dish dish = dishMapper.getById(dishId);
@@ -66,15 +91,16 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
             shoppingCart.setImage(dish.getImage());
             shoppingCart.setAmount(dish.getPrice());
         } else {
-            Long setmealId = shoppingCartDTO.getSetmealId();
-            Setmeal setmeal = setmealMapper.getById(setmealId);
+            Setmeal setmeal = setmealMapper.getById(shoppingCartDTO.getSetmealId());
             shoppingCart.setName(setmeal.getName());
             shoppingCart.setImage(setmeal.getImage());
             shoppingCart.setAmount(setmeal.getPrice());
         }
         shoppingCart.setNumber(1);
         shoppingCart.setCreateTime(LocalDateTime.now());
-        shoppingCartMapper.insert(shoppingCart);
+
+        hashOps.put(key, field, JSON.toJSONString(shoppingCart));
+        stringRedisTemplate.expire(key, CART_TTL);
     }
 
     /**
@@ -82,10 +108,15 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
      * @return
      */
     public List<ShoppingCart> showShoppingCart() {
-        ShoppingCart shoppingCart = ShoppingCart.builder()
-                .userId(BaseContext.getCurrentId())
-                .build();
-        return shoppingCartMapper.list(shoppingCart);
+        HashOperations<String, String, String> hashOps = stringRedisTemplate.opsForHash();
+        Map<String, String> entries = hashOps.entries(cartKey(BaseContext.getCurrentId()));
+        List<ShoppingCart> list = new ArrayList<>();
+        for (String json : entries.values()) {
+            list.add(JSON.parseObject(json, ShoppingCart.class));
+        }
+        // Redis Hash不保证遍历顺序，用createTime手动排回原来"最新加入的排前面"的语义
+        list.sort(Comparator.comparing(ShoppingCart::getCreateTime).reversed());
+        return list;
     }
 
     /**
@@ -93,24 +124,21 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
      * @param shoppingCartDTO
      */
     public void subShoppingCart(ShoppingCartDTO shoppingCartDTO) {
-        ShoppingCart shoppingCart = new ShoppingCart();
-        BeanUtils.copyProperties(shoppingCartDTO, shoppingCart);
-        shoppingCart.setUserId(BaseContext.getCurrentId());
+        String key = cartKey(BaseContext.getCurrentId());
+        String field = itemKey(shoppingCartDTO.getDishId(), shoppingCartDTO.getSetmealId(), shoppingCartDTO.getDishFlavor());
+        HashOperations<String, String, String> hashOps = stringRedisTemplate.opsForHash();
 
-        // 定位到具体是购物车中的哪一行
-        List<ShoppingCart> list = shoppingCartMapper.list(shoppingCart);
-        if (list == null || list.isEmpty()) {
+        String json = hashOps.get(key, field);
+        if (json == null) {
             return;
         }
-
-        ShoppingCart existCart = list.get(0);
-        if (existCart.getNumber() == 1) {
-            // 数量为1，直接删除这一行
-            shoppingCartMapper.deleteById(existCart.getId());
+        ShoppingCart existCart = JSON.parseObject(json, ShoppingCart.class);
+        if (existCart.getNumber() == null || existCart.getNumber() <= 1) {
+            hashOps.delete(key, field);
         } else {
-            // 数量减一
             existCart.setNumber(existCart.getNumber() - 1);
-            shoppingCartMapper.updateNumberById(existCart);
+            hashOps.put(key, field, JSON.toJSONString(existCart));
+            stringRedisTemplate.expire(key, CART_TTL);
         }
     }
 
@@ -118,6 +146,43 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
      * 清空当前用户的购物车
      */
     public void cleanShoppingCart() {
-        shoppingCartMapper.deleteByUserId(BaseContext.getCurrentId());
+        stringRedisTemplate.delete(cartKey(BaseContext.getCurrentId()));
+    }
+
+    /**
+     * 批量加入购物车（"再来一单"用）：每个商品的名称/图片/金额已经从原订单详情里带过来了，不用再查一次dish/setmeal表。
+     * 已存在的商品数量累加，不存在的直接新增。
+     */
+    public void addAll(List<ShoppingCart> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        Long userId = BaseContext.getCurrentId();
+        String key = cartKey(userId);
+        HashOperations<String, String, String> hashOps = stringRedisTemplate.opsForHash();
+        for (ShoppingCart item : items) {
+            String field = itemKey(item.getDishId(), item.getSetmealId(), item.getDishFlavor());
+            String existingJson = hashOps.get(key, field);
+            if (existingJson != null) {
+                ShoppingCart existCart = JSON.parseObject(existingJson, ShoppingCart.class);
+                existCart.setNumber(existCart.getNumber() + item.getNumber());
+                hashOps.put(key, field, JSON.toJSONString(existCart));
+            } else {
+                item.setUserId(userId);
+                hashOps.put(key, field, JSON.toJSONString(item));
+            }
+        }
+        stringRedisTemplate.expire(key, CART_TTL);
+    }
+
+    private String cartKey(Long userId) {
+        return KEY_PREFIX + userId;
+    }
+
+    private String itemKey(Long dishId, Long setmealId, String dishFlavor) {
+        if (dishId != null) {
+            return "dish:" + dishId + ":" + (dishFlavor == null ? "" : dishFlavor);
+        }
+        return "setmeal:" + setmealId;
     }
 }

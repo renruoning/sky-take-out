@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <!-- 在Spring Boot默认控制台格式基础上加一个[traceId]字段，把同一次请求里散落在各层的日志行关联起来 -->
+    <property name="CONSOLE_LOG_PATTERN"
+              value="${CONSOLE_LOG_PATTERN:-%clr(%d{${LOG_DATEFORMAT_PATTERN:-yyyy-MM-dd HH:mm:ss.SSS}}){faint} %clr(${LOG_LEVEL_PATTERN:-%5p}) %clr([%X{traceId:-        }]){yellow} %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}}"/>
     <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
 
     <springProperty name="DB_URL" source="spring.datasource.druid.url"/>

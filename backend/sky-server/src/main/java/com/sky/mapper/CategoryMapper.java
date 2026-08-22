@@ -9,10 +9,19 @@ import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import java.util.List;
 
 @Mapper
 public interface CategoryMapper {
+
+    /**
+     * 判断某个分类id是否真实存在（用于菜品查询接口挡掉编造分类id的缓存穿透攻击，不用等到查dish表才发现是空的）
+     * @param id
+     * @return
+     */
+    @Select("select count(1) from category where id = #{id}")
+    int existsById(Long id);
 
     /**
      * 插入数据

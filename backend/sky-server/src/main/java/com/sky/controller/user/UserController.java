@@ -1,9 +1,11 @@
 package com.sky.controller.user;
 
+import com.sky.annotation.RateLimit;
 import com.sky.constant.JwtClaimsConstant;
 import com.sky.dto.UserAccountLoginDTO;
 import com.sky.dto.UserLoginDTO;
 import com.sky.entity.User;
+import com.sky.enumeration.RateLimitKeyType;
 import com.sky.properties.JwtProperties;
 import com.sky.result.Result;
 import com.sky.service.UserService;
@@ -43,6 +45,8 @@ public class UserController {
      */
     @PostMapping("/login")
     @ApiOperation("账号密码登录")
+    @RateLimit(keyType = RateLimitKeyType.IP, limit = 10, windowSeconds = 60, name = "user_login",
+            message = "登录尝试过于频繁，请稍后再试")
     public Result<UserLoginVO> login(@RequestBody UserAccountLoginDTO userAccountLoginDTO){
         log.info("用户登录：{}", userAccountLoginDTO.getUsername());
         User user = userService.accountLogin(userAccountLoginDTO);

@@ -18,6 +18,7 @@ import com.sky.entity.Dish;
 import com.sky.entity.DishFlavor;
 import com.sky.exception.DeletionNotAllowedException;
 import com.sky.entity.Setmeal;
+import com.sky.mapper.CategoryMapper;
 import com.sky.mapper.DishFlavorMapper;
 import com.sky.mapper.DishMapper;
 import com.sky.mapper.SetmealDishMapper;
@@ -36,13 +37,15 @@ public class DishServiceImpl implements DishService {
     private final DishFlavorMapper dishFlavorMapper;
     private final SetmealDishMapper setmealDishMapper;
     private final SetmealMapper setmealMapper;
+    private final CategoryMapper categoryMapper;
 
     DishServiceImpl(DishMapper dishMapper, SetmealDishMapper setmealDishMapper, DishFlavorMapper dishFlavorMapper,
-            SetmealMapper setmealMapper) {
+            SetmealMapper setmealMapper, CategoryMapper categoryMapper) {
         this.dishMapper = dishMapper;
         this.dishFlavorMapper = dishFlavorMapper;
         this.setmealDishMapper = setmealDishMapper;
         this.setmealMapper = setmealMapper;
+        this.categoryMapper = categoryMapper;
     }
 
     /**
@@ -146,10 +149,19 @@ public class DishServiceImpl implements DishService {
      */
     @Transactional
     public void updateWithFlavor(DishDTO dishDTO) {
+        Long shopId = BaseContext.getCurrentShopId();
+
+        // 越权校验：dishMapper.update本身按shop_id限定了WHERE条件，跨店传入别人的dishId时那一步会静默不生效，
+        // 但下面口味表的删除/重建操作是单独按dishId执行的，不校验就会变成"别人的菜品id能让你清空并替换它的口味选项"
+        Dish existingDish = dishMapper.getById(dishDTO.getId());
+        if (existingDish == null || !existingDish.getShopId().equals(shopId)) {
+            throw new DeletionNotAllowedException(MessageConstant.DISH_NOT_FOUND);
+        }
+
         // 更新菜品表中的菜品信息
         Dish dish = new Dish();
         BeanUtils.copyProperties(dishDTO, dish);
-        dish.setShopId(BaseContext.getCurrentShopId());
+        dish.setShopId(shopId);
         dishMapper.update(dish);
 
         // 删除口味表中原有的口味信息
@@ -169,6 +181,11 @@ public class DishServiceImpl implements DishService {
      * @return
      */
     public List<DishVO> listWithFlavor(Dish dish) {
+        // 缓存穿透防护：categoryId是编造出来的、根本不存在的分类，直接返回空，不用再去查dish表——
+        // 这个空结果本身也会被上层的@Cacheable缓存住，同一个编造id反复请求，第二次开始连这行判断都不用走
+        if (dish.getCategoryId() != null && categoryMapper.existsById(dish.getCategoryId()) == 0) {
+            return new ArrayList<>();
+        }
         List<Dish> dishList = dishMapper.list(dish);
 
         List<DishVO> dishVOList = new ArrayList<>();

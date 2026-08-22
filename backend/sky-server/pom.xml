@@ -121,6 +121,12 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
         </dependency>
+
+        <!-- 注册到Nacos，实现服务发现，供sky-gateway按服务名路由 -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

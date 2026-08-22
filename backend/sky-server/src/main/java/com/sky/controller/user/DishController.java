@@ -1,7 +1,9 @@
 package com.sky.controller.user;
 
+import com.sky.annotation.RateLimit;
 import com.sky.constant.StatusConstant;
 import com.sky.entity.Dish;
+import com.sky.enumeration.RateLimitKeyType;
 import com.sky.result.Result;
 import com.sky.service.DishService;
 import com.sky.vo.DishVO;
@@ -31,10 +33,11 @@ public class DishController {
      * @param categoryId
      * @return
      */
-    // TODO: redis异常/不可用时该接口会直接报错，未做降级到数据库的兜底处理
     @GetMapping("/list")
     @ApiOperation("根据分类id查询菜品")
     @Cacheable(cacheNames = "dishCache", key = "#categoryId")
+    @RateLimit(keyType = RateLimitKeyType.IP, limit = 120, windowSeconds = 60, name = "menu_query",
+            message = "请求过于频繁，请稍后再试")
     public Result<List<DishVO>> list(Long categoryId, Long shopId) {
         Dish dish = new Dish();
         dish.setCategoryId(categoryId);

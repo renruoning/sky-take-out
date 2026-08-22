@@ -16,6 +16,9 @@ import com.sky.result.PageResult;
 import com.sky.service.ReviewService;
 import com.sky.vo.ReviewVO;
 import com.sky.vo.ShopRatingSummaryVO;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -23,12 +26,16 @@ import java.time.LocalDateTime;
 @Service
 public class ReviewServiceImpl implements ReviewService {
 
+    private static final String RATING_SUMMARY_CACHE = "shopRatingSummaryCache";
+
     private final ReviewMapper reviewMapper;
     private final OrderMapper orderMapper;
+    private final CacheManager cacheManager;
 
-    ReviewServiceImpl(ReviewMapper reviewMapper, OrderMapper orderMapper) {
+    ReviewServiceImpl(ReviewMapper reviewMapper, OrderMapper orderMapper, CacheManager cacheManager) {
         this.reviewMapper = reviewMapper;
         this.orderMapper = orderMapper;
+        this.cacheManager = cacheManager;
     }
 
     public void submit(ReviewDTO reviewDTO) {
@@ -56,6 +63,13 @@ public class ReviewServiceImpl implements ReviewService {
                 .createTime(LocalDateTime.now())
                 .build();
         reviewMapper.insert(review);
+
+        // 这条评价改变了该店铺的平均分，把汇总缓存清掉，下次查询重新计算一次并回填缓存（cache-aside写路径）。
+        // shopId是方法内查出来的局部变量，不是submit的入参，没法用@CacheEvict的SpEL直接引用，所以用CacheManager手动清
+        Cache cache = cacheManager.getCache(RATING_SUMMARY_CACHE);
+        if (cache != null) {
+            cache.evict(order.getShopId());
+        }
     }
 
     public PageResult pageQueryByShop(Long shopId, ReviewPageQueryDTO reviewPageQueryDTO) {
@@ -83,6 +97,9 @@ public class ReviewServiceImpl implements ReviewService {
         }
     }
 
+    // 之前是每次都对review表实时avg()+count()聚合，店铺列表接口对每个店铺都要跑一次这个查询；
+    // 改成读缓存、提交评价时清缓存，读多写少的场景下不再需要每次现算
+    @Cacheable(cacheNames = RATING_SUMMARY_CACHE, key = "#shopId")
     public ShopRatingSummaryVO getShopRatingSummary(Long shopId) {
         ShopRatingSummaryVO summary = reviewMapper.getShopRatingSummary(shopId);
         if (summary == null || summary.getReviewCount() == null) {

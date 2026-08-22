@@ -18,32 +18,35 @@ import com.sky.entity.User;
 import com.sky.exception.AddressBookBusinessException;
 import com.sky.exception.OrderBusinessException;
 import com.sky.exception.ShoppingCartBusinessException;
-import com.sky.mapper.AddressBookMapper;
 import com.sky.mapper.OrderDetailMapper;
 import com.sky.mapper.OrderMapper;
-import com.sky.mapper.ShoppingCartMapper;
 import com.sky.mapper.UserMapper;
-import com.alibaba.fastjson.JSONObject;
 import com.sky.result.PageResult;
+import com.sky.service.AddressBookService;
 import com.sky.service.OrderService;
+import com.sky.service.ShoppingCartService;
 import com.sky.utils.WeChatPayUtil;
 import com.sky.vo.OrderPaymentVO;
 import com.sky.vo.OrderStatisticsVO;
 import com.sky.vo.OrderSubmitVO;
 import com.sky.vo.OrderVO;
-import com.sky.websocket.WebSocketServer;
 import com.sky.config.RabbitMQConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -52,24 +55,27 @@ public class OrderServiceImpl implements OrderService {
 
     private final OrderMapper orderMapper;
     private final OrderDetailMapper orderDetailMapper;
-    private final AddressBookMapper addressBookMapper;
-    private final ShoppingCartMapper shoppingCartMapper;
+    private final AddressBookService addressBookService;
+    private final ShoppingCartService shoppingCartService;
     private final UserMapper userMapper;
     private final WeChatPayUtil weChatPayUtil;
-    private final WebSocketServer webSocketServer;
     private final RabbitTemplate rabbitTemplate;
+    private final RedisTemplate<String, Object> redisTemplate;
 
-    OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, AddressBookMapper addressBookMapper,
-                      ShoppingCartMapper shoppingCartMapper, UserMapper userMapper, WeChatPayUtil weChatPayUtil,
-                      WebSocketServer webSocketServer, RabbitTemplate rabbitTemplate) {
+    private static final String SUBMIT_LOCK_PREFIX = "lock:order:submit:";
+    private static final Duration SUBMIT_LOCK_TTL = Duration.ofSeconds(5);
+
+    OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, AddressBookService addressBookService,
+                      ShoppingCartService shoppingCartService, UserMapper userMapper, WeChatPayUtil weChatPayUtil,
+                      RabbitTemplate rabbitTemplate, RedisTemplate<String, Object> redisTemplate) {
         this.orderMapper = orderMapper;
         this.orderDetailMapper = orderDetailMapper;
-        this.addressBookMapper = addressBookMapper;
-        this.webSocketServer = webSocketServer;
-        this.shoppingCartMapper = shoppingCartMapper;
+        this.addressBookService = addressBookService;
+        this.shoppingCartService = shoppingCartService;
         this.userMapper = userMapper;
         this.weChatPayUtil = weChatPayUtil;
         this.rabbitTemplate = rabbitTemplate;
+        this.redisTemplate = redisTemplate;
     }
 
     /**
@@ -79,61 +85,95 @@ public class OrderServiceImpl implements OrderService {
      */
     @Transactional
     public OrderSubmitVO submit(OrdersSubmitDTO ordersSubmitDTO) {
-        // 校验地址簿是否存在
-        AddressBook addressBook = addressBookMapper.getById(ordersSubmitDTO.getAddressBookId());
-        if (addressBook == null) {
-            throw new AddressBookBusinessException(MessageConstant.ADDRESS_BOOK_IS_NULL);
-        }
-
-        // 校验购物车是否为空
         Long userId = BaseContext.getCurrentId();
-        ShoppingCart shoppingCartQuery = ShoppingCart.builder().userId(userId).build();
-        List<ShoppingCart> shoppingCartList = shoppingCartMapper.list(shoppingCartQuery);
-        if (shoppingCartList == null || shoppingCartList.isEmpty()) {
-            throw new ShoppingCartBusinessException(MessageConstant.SHOPPING_CART_IS_NULL);
+
+        // 防止网络抖动/手滑重复点提交在同一时刻并发下单：用Redis SETNX抢一把按用户维度的短时锁，
+        // 抢不到说明上一次提交还没处理完，直接拒绝而不是让两个请求都读到同一份购物车、各自建一笔订单。
+        // Redis本身不可达时不能连累下单这条主链路：记日志、放弃这次幂等保护、照常下单（fail-open），
+        // 好过让整个点餐功能因为一个辅助组件挂了而全部不可用。
+        String lockKey = SUBMIT_LOCK_PREFIX + userId;
+        boolean lockAcquired = false;
+        try {
+            Boolean acquired = redisTemplate.opsForValue().setIfAbsent(lockKey, "1", SUBMIT_LOCK_TTL);
+            if (acquired == null || !acquired) {
+                throw new OrderBusinessException(MessageConstant.ORDER_SUBMIT_DUPLICATE);
+            }
+            lockAcquired = true;
+        } catch (OrderBusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("下单幂等锁访问Redis失败，本次放弃幂等保护直接下单（fail-open）", e);
         }
 
-        User user = userMapper.getById(userId);
+        try {
+            // 校验地址簿是否存在
+            AddressBook addressBook = addressBookService.getById(ordersSubmitDTO.getAddressBookId());
+            if (addressBook == null) {
+                throw new AddressBookBusinessException(MessageConstant.ADDRESS_BOOK_IS_NULL);
+            }
 
-        // 插入订单：店铺id取自购物车（购物车已保证单一店铺，不信任客户端传入的店铺id）
-        Orders orders = new Orders();
-        BeanUtils.copyProperties(ordersSubmitDTO, orders);
-        orders.setNumber(String.valueOf(System.currentTimeMillis()));
-        orders.setStatus(Orders.PENDING_PAYMENT);
-        orders.setUserId(userId);
-        orders.setShopId(shoppingCartList.get(0).getShopId());
-        orders.setOrderTime(LocalDateTime.now());
-        orders.setPayStatus(Orders.UN_PAID);
-        orders.setPhone(addressBook.getPhone());
-        orders.setConsignee(addressBook.getConsignee());
-        orders.setUserName(user.getName());
-        orders.setAddress(addressBook.getProvinceName() + addressBook.getCityName()
-                + addressBook.getDistrictName() + addressBook.getDetail());
+            // 校验购物车是否为空
+            List<ShoppingCart> shoppingCartList = shoppingCartService.showShoppingCart();
+            if (shoppingCartList == null || shoppingCartList.isEmpty()) {
+                throw new ShoppingCartBusinessException(MessageConstant.SHOPPING_CART_IS_NULL);
+            }
 
-        orderMapper.insert(orders);
+            User user = userMapper.getById(userId);
 
-        // 插入订单明细
-        List<OrderDetail> orderDetailList = new ArrayList<>();
-        for (ShoppingCart cart : shoppingCartList) {
-            OrderDetail orderDetail = new OrderDetail();
-            BeanUtils.copyProperties(cart, orderDetail);
-            orderDetail.setOrderId(orders.getId());
-            orderDetailList.add(orderDetail);
+            // 插入订单：店铺id取自购物车（购物车已保证单一店铺，不信任客户端传入的店铺id）
+            Orders orders = new Orders();
+            BeanUtils.copyProperties(ordersSubmitDTO, orders);
+            orders.setNumber(String.valueOf(System.currentTimeMillis()));
+            orders.setStatus(Orders.PENDING_PAYMENT);
+            orders.setUserId(userId);
+            orders.setShopId(shoppingCartList.get(0).getShopId());
+            orders.setOrderTime(LocalDateTime.now());
+            orders.setPayStatus(Orders.UN_PAID);
+            orders.setPhone(addressBook.getPhone());
+            orders.setConsignee(addressBook.getConsignee());
+            orders.setUserName(user.getName());
+            orders.setAddress(addressBook.getProvinceName() + addressBook.getCityName()
+                    + addressBook.getDistrictName() + addressBook.getDetail());
+
+            orderMapper.insert(orders);
+
+            // 插入订单明细
+            List<OrderDetail> orderDetailList = new ArrayList<>();
+            for (ShoppingCart cart : shoppingCartList) {
+                OrderDetail orderDetail = new OrderDetail();
+                BeanUtils.copyProperties(cart, orderDetail);
+                orderDetail.setOrderId(orders.getId());
+                orderDetailList.add(orderDetail);
+            }
+            orderDetailMapper.insertBatch(orderDetailList);
+
+            // 清空购物车
+            shoppingCartService.cleanShoppingCart();
+
+            // 发送延迟消息，若30分钟后订单仍未支付则自动取消。
+            // RabbitMQ不可达不该导致下单直接失败——那样"能不能点餐"就被一个订单超时兜底机制卡住了，
+            // 代价是这一笔订单万一真没付款也不会被自动取消，需要靠人工/对账兜底，两害相权取其轻。
+            try {
+                rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_EXCHANGE, RabbitMQConfig.ORDER_TIMEOUT_DELAY_ROUTING_KEY, orders.getId());
+            } catch (Exception e) {
+                log.error("订单{}的超时取消延迟消息发送失败（RabbitMQ不可达），订单已正常创建，但不会被自动取消，需要人工关注", orders.getId(), e);
+            }
+
+            return OrderSubmitVO.builder()
+                    .id(orders.getId())
+                    .orderNumber(orders.getNumber())
+                    .orderAmount(orders.getAmount())
+                    .orderTime(orders.getOrderTime())
+                    .build();
+        } finally {
+            if (lockAcquired) {
+                try {
+                    redisTemplate.delete(lockKey);
+                } catch (Exception e) {
+                    log.error("释放下单幂等锁失败，key={}，会在TTL到期后自然失效", lockKey, e);
+                }
+            }
         }
-        orderDetailMapper.insertBatch(orderDetailList);
-
-        // 清空购物车
-        shoppingCartMapper.deleteByUserId(userId);
-
-        // 发送延迟消息，若30分钟后订单仍未支付则自动取消
-        rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_EXCHANGE, RabbitMQConfig.ORDER_TIMEOUT_DELAY_ROUTING_KEY, orders.getId());
-
-        return OrderSubmitVO.builder()
-                .id(orders.getId())
-                .orderNumber(orders.getNumber())
-                .orderAmount(orders.getAmount())
-                .orderTime(orders.getOrderTime())
-                .build();
     }
 
     /**
@@ -143,6 +183,16 @@ public class OrderServiceImpl implements OrderService {
      * @return
      */
     public OrderPaymentVO payment(OrdersPaymentDTO ordersPaymentDTO) throws Exception {
+        // 幂等保护：网络重试/用户重复点"支付"，同一笔订单不能被处理第二次（否则会重复推送来单提醒，
+        // 真实支付场景下更是不能重复走一遍支付成功的业务逻辑）
+        Orders ordersDB = orderMapper.getByNumber(ordersPaymentDTO.getOrderNumber());
+        if (ordersDB == null) {
+            throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
+        }
+        if (Orders.PAID.equals(ordersDB.getPayStatus())) {
+            throw new OrderBusinessException(MessageConstant.ORDER_ALREADY_PAID);
+        }
+
         // 暂无微信支付商户资质，无法调用真实的微信支付接口，直接跳过下单并标记为支付成功，方便本地联调后续流程
         paySuccess(ordersPaymentDTO.getOrderNumber());
 
@@ -169,12 +219,9 @@ public class OrderServiceImpl implements OrderService {
 
         orderMapper.update(orders);
 
-        // 通过WebSocket向商家端推送来单提醒（只推给该订单所属店铺的客户端）
-        JSONObject message = new JSONObject();
-        message.put("type", 1); // 1表示来单提醒
-        message.put("orderId", ordersDB.getId());
-        message.put("content", "订单号：" + outTradeNo);
-        webSocketServer.sendToShopClients(ordersDB.getShopId(), message.toJSONString());
+        // 来单提醒改成发事件到MQ异步推送（见OrderEventNotifyListener），"改状态"和"发通知"解耦，
+        // 通知推送的快慢/成败不再影响这个方法本身的响应
+        publishOrderEvent(1, ordersDB.getId(), ordersDB.getShopId(), "订单号：" + outTradeNo);
     }
 
     /**
@@ -190,12 +237,27 @@ public class OrderServiceImpl implements OrderService {
             throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
         }
 
-        // 通过WebSocket向商家端推送客户催单提醒（只推给该订单所属店铺的客户端）
-        JSONObject message = new JSONObject();
-        message.put("type", 2); // 2表示客户催单
-        message.put("orderId", ordersDB.getId());
-        message.put("content", "订单号：" + ordersDB.getNumber());
-        webSocketServer.sendToShopClients(ordersDB.getShopId(), message.toJSONString());
+        // 客户催单同理，发事件到MQ异步推送
+        publishOrderEvent(2, ordersDB.getId(), ordersDB.getShopId(), "订单号：" + ordersDB.getNumber());
+    }
+
+    /**
+     * 发布订单事件（来单提醒type=1/客户催单type=2）到MQ，由OrderEventNotifyListener异步消费并推送WebSocket。
+     * messageId用于消费端去重（MQ只保证至少一次投递）。
+     * RabbitMQ不可达时不能让通知发不出去这件事拖垮下单/催单接口本身，记日志、跳过推送，fail-open。
+     */
+    private void publishOrderEvent(int type, Long orderId, Long shopId, String content) {
+        try {
+            Map<String, Object> message = new HashMap<>();
+            message.put("messageId", UUID.randomUUID().toString());
+            message.put("type", type);
+            message.put("orderId", orderId);
+            message.put("shopId", shopId);
+            message.put("content", content);
+            rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_EXCHANGE, RabbitMQConfig.ORDER_EVENT_NOTIFY_ROUTING_KEY, message);
+        } catch (Exception e) {
+            log.error("订单事件消息发送失败（RabbitMQ不可达），本次通知推送跳过，订单本身的状态变更不受影响", e);
+        }
     }
 
     /**
@@ -315,8 +377,8 @@ public class OrderServiceImpl implements OrderService {
             return shoppingCart;
         }).collect(Collectors.toList());
 
-        // 将购物车对象批量添加到数据库
-        shoppingCartMapper.insertBatch(shoppingCartList);
+        // 将购物车对象批量加入购物车（现在存Redis，不是数据库）
+        shoppingCartService.addAll(shoppingCartList);
     }
 
     /**

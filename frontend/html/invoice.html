@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Sky Take Out - 发票</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --border:#2a3450;
+    --text:#e6e9f0; --muted:#8b93a7; --accent:#4f8cff;
+  }
+  *{box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:"Segoe UI",Consolas,-apple-system,sans-serif;font-size:14px;margin:0;padding:32px 20px;}
+  button{cursor:pointer;font-family:inherit;}
+  #sheet{max-width:640px;margin:0 auto;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:36px 40px;}
+  #sheet h1{font-size:20px;margin:0 0 4px;text-align:center;}
+  #sheet .sub{text-align:center;color:var(--muted);font-size:12.5px;margin-bottom:28px;}
+  .row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px dashed var(--border);font-size:13.5px;}
+  .row .label{color:var(--muted);}
+  .amount{text-align:center;margin-top:24px;font-size:26px;font-weight:700;color:var(--accent);}
+  .actions{text-align:center;margin-top:26px;}
+  .actions button{background:var(--accent);border:none;color:#fff;padding:9px 22px;border-radius:7px;font-size:13.5px;font-weight:600;}
+  #err{color:#ff9a9a;text-align:center;padding:40px 0;}
+
+  @media print{
+    body{background:#fff;color:#000;padding:0;}
+    #sheet{border:none;box-shadow:none;color:#000;}
+    .row{border-bottom:1px dashed #999;}
+    .row .label{color:#555;}
+    .amount{color:#000;}
+    .actions{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<div id="sheet">
+  <h1>Sky Take Out 电子发票</h1>
+  <div class="sub" id="invoiceMeta">加载中...</div>
+  <div id="rows"></div>
+  <div class="amount" id="amountText"></div>
+  <div class="actions">
+    <button onclick="window.print()">打印 / 保存为PDF</button>
+  </div>
+</div>
+
+<script>
+const TOKEN_KEY = 'sky_customer_token';
+const token = localStorage.getItem(TOKEN_KEY) || '';
+
+function esc(str){
+  return String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function load(){
+  const id = new URLSearchParams(location.search).get('id');
+  const sheet = document.getElementById('sheet');
+  if (!id) { sheet.innerHTML = '<div id="err">缺少发票id</div>'; return; }
+  try {
+    const resp = await fetch('/user/invoice/' + id, { headers: token ? { authentication: token } : {} });
+    const data = await resp.json();
+    if (data.code !== 1) throw new Error(data.msg || '加载失败');
+    const inv = data.data;
+    document.getElementById('invoiceMeta').textContent = `发票编号 INV-${String(inv.id).padStart(8, '0')} · 开具时间 ${inv.createTime || ''}`;
+    document.getElementById('rows').innerHTML = `
+      <div class="row"><span class="label">发票抬头</span><span>${esc(inv.title)}</span></div>
+      <div class="row"><span class="label">抬头类型</span><span>${inv.invoiceType === 2 ? '单位' : '个人'}</span></div>
+      ${inv.taxNumber ? `<div class="row"><span class="label">纳税人识别号</span><span>${esc(inv.taxNumber)}</span></div>` : ''}
+      <div class="row"><span class="label">销售方</span><span>${esc(inv.shopName || '')}</span></div>
+      <div class="row"><span class="label">订单号</span><span>${esc(inv.orderNumber || '')}</span></div>
+      <div class="row"><span class="label">下单时间</span><span>${esc(inv.orderTime || '')}</span></div>
+      ${inv.email ? `<div class="row"><span class="label">接收邮箱</span><span>${esc(inv.email)}</span></div>` : ''}
+    `;
+    document.getElementById('amountText').textContent = `￥${inv.amount}`;
+  } catch (e) {
+    sheet.innerHTML = `<div id="err">${esc(e.message)}</div>`;
+  }
+}
+load();
+</script>
+</body>
+</html>

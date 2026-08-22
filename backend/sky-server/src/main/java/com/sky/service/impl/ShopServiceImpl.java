@@ -12,6 +12,8 @@ import com.sky.mapper.ShopMapper;
 import com.sky.result.PageResult;
 import com.sky.service.ShopService;
 import org.springframework.beans.BeanUtils;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -40,6 +42,7 @@ public class ShopServiceImpl implements ShopService {
         }
     }
 
+    @CacheEvict(cacheNames = "shopListCache", allEntries = true)
     public void save(ShopDTO shopDTO) {
         checkPlatformAdmin();
         if (shopDTO.getBusinessType() == null) {
@@ -63,6 +66,8 @@ public class ShopServiceImpl implements ShopService {
         return new PageResult(page.getTotal(), page.getResult());
     }
 
+    // 店铺信息（含businessType，会影响用户端按分类过滤后的列表结果）改动很少，一律清空整个shopListCache而不是精算受影响的key
+    @CacheEvict(cacheNames = "shopListCache", allEntries = true)
     public void update(ShopDTO shopDTO) {
         checkPlatformAdmin();
         Shop shop = new Shop();
@@ -99,6 +104,7 @@ public class ShopServiceImpl implements ShopService {
         }
     }
 
+    @CacheEvict(cacheNames = "shopListCache", allEntries = true)
     public void startOrStop(Integer status, Long id) {
         checkPlatformAdmin();
         Shop shop = Shop.builder()
@@ -108,6 +114,10 @@ public class ShopServiceImpl implements ShopService {
         shopMapper.update(shop);
     }
 
+    /**
+     * 展示频繁但几乎不改的数据（店铺名称/地址/营业类型），走缓存
+     */
+    @Cacheable(cacheNames = "shopListCache", key = "#businessType != null ? #businessType : 'ALL'")
     public List<Shop> listActive(Integer businessType) {
         return shopMapper.listActive(businessType);
     }

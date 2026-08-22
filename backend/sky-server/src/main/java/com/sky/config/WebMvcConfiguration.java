@@ -2,6 +2,7 @@ package com.sky.config;
 
 import com.sky.interceptor.JwtTokenAdminInterceptor;
 import com.sky.interceptor.JwtTokenUserInterceptor;
+import com.sky.interceptor.RequestLoggingInterceptor;
 import com.sky.json.JacksonObjectMapper;
 
 import java.util.List;
@@ -30,9 +31,12 @@ public class WebMvcConfiguration extends WebMvcConfigurationSupport {
 
     private final JwtTokenAdminInterceptor jwtTokenAdminInterceptor;
     private final JwtTokenUserInterceptor jwtTokenUserInterceptor;
-    WebMvcConfiguration(JwtTokenAdminInterceptor jwtTokenAdminInterceptor, JwtTokenUserInterceptor jwtTokenUserInterceptor) {
+    private final RequestLoggingInterceptor requestLoggingInterceptor;
+    WebMvcConfiguration(JwtTokenAdminInterceptor jwtTokenAdminInterceptor, JwtTokenUserInterceptor jwtTokenUserInterceptor,
+                         RequestLoggingInterceptor requestLoggingInterceptor) {
         this.jwtTokenAdminInterceptor = jwtTokenAdminInterceptor;
         this.jwtTokenUserInterceptor = jwtTokenUserInterceptor;
+        this.requestLoggingInterceptor = requestLoggingInterceptor;
     }
 
     /**
@@ -48,7 +52,11 @@ public class WebMvcConfiguration extends WebMvcConfigurationSupport {
         registry.addInterceptor(jwtTokenUserInterceptor)
                 .addPathPatterns("/user/**")
                 .excludePathPatterns("/user/user/login")
-                .excludePathPatterns("/user/shop/status");       
+                .excludePathPatterns("/user/shop/status");
+        // 必须最后注册：Spring MVC按注册顺序执行preHandle、按反顺序执行afterCompletion，
+        // 这样访问日志的afterCompletion会先于jwt拦截器的afterCompletion执行，
+        // 此时BaseContext里的当前用户id还没被jwt拦截器清空，日志才能拿到是谁发起的这次请求
+        registry.addInterceptor(requestLoggingInterceptor).addPathPatterns("/**");
     }
 
     /**

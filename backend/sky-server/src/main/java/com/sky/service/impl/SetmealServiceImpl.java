@@ -154,9 +154,18 @@ public class SetmealServiceImpl implements SetmealService {
     */
     @Transactional
     public void update(SetmealDTO setmealDTO) {
+        Long shopId = BaseContext.getCurrentShopId();
+
+        // 越权校验：setmealMapper.update本身按shop_id限定了WHERE条件，跨店传入别人的setmealId时那一步会静默不生效，
+        // 但下面套餐菜品关联表的删除/重建操作是单独按setmealId执行的，不校验就会变成"别人的套餐id能让你清空并替换它包含的菜品"
+        Setmeal existingSetmeal = setmealMapper.getById(setmealDTO.getId());
+        if (existingSetmeal == null || !existingSetmeal.getShopId().equals(shopId)) {
+            throw new DeletionNotAllowedException(MessageConstant.SETMEAL_NOT_FOUND);
+        }
+
         Setmeal setmeal = new Setmeal();
         BeanUtils.copyProperties(setmealDTO, setmeal);
-        setmeal.setShopId(BaseContext.getCurrentShopId());
+        setmeal.setShopId(shopId);
 
         //1、修改套餐表，执行update
         setmealMapper.update(setmeal);

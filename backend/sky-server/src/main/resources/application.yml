@@ -1,9 +1,25 @@
 server:
-  port: 8090
+  # 8090现在是sky-gateway的端口，sky-server挪到这个端口，只有网关和其它已注册到Nacos的服务能按服务名找到它——
+  # nginx.conf里的upstream原本就指向8090，改成指向gateway之后不需要再改nginx配置
+  port: 8091
+  tomcat:
+    threads:
+      # 默认值是200，对这个项目的实际规模（demo/作品集评审，不是真实大流量）明显过量；
+      # 显式调小到跟下面Druid连接池数量级匹配的水平，是为了让这两个数字互相呼应，而不是各自随便取一个
+      max: 50
+      min-spare: 10
+    # 线程池打满之后，允许在accept队列里排队等待的连接数，超过这个数直接拒绝而不是无限堆积
+    accept-count: 100
 
 spring:
   profiles:
     active: dev
+  application:
+    name: sky-server
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
   main:
     allow-circular-references: true
   datasource:
@@ -12,6 +28,12 @@ spring:
       url: jdbc:mysql://${sky.datasource.host}:${sky.datasource.port}/${sky.datasource.database}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
       username: ${sky.datasource.username}
       password: ${sky.datasource.password}
+      # Druid不显式配置时max-active默认只有8——对这个项目来说太小了，前面并发下单测试稍微多开几个连接就可能顶到；
+      # 这里按demo规模显式给一组数字，而不是继续依赖框架默认值。真要估算工业级流量下的池子大小，走P5的容量规划方法论
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 3000
   redis:
     host: ${sky.redis.host}
     port: ${sky.redis.port}
