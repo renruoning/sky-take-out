@@ -35,10 +35,11 @@ spring:
       max-active: 20
       max-wait: 3000
   redis:
-    host: ${sky.redis.host}
-    port: ${sky.redis.port}
     password: ${sky.redis.password}
     database: ${sky.redis.database}
+    sentinel:
+      master: ${sky.redis.sentinel-master}
+      nodes: ${sky.redis.sentinel-nodes}
   rabbitmq:
     host: ${sky.rabbitmq.host}
     port: ${sky.rabbitmq.port}

@@ -75,6 +75,10 @@ public class Orders implements Serializable {
     //用户名
     private String userName;
 
+    //用户头像（下单时快照，供order-service自己拼OrderSummaryVO用，评价服务需要这个字段，
+    //不需要为此单独反查user表——user表没有跟着订单一起搬）
+    private String userAvatar;
+
     //手机号
     private String phone;
 

@@ -30,6 +30,13 @@ public class Review implements Serializable {
     //评价人
     private Long userId;
 
+    //以下两个是提交评价时从订单/用户信息快照下来的展示字段（评价服务拆成独立库之后没法再跟orders/user表JOIN）
+    private String orderNumber;
+
+    private String userName;
+
+    private String userAvatar;
+
     //1-5星
     private Integer rating;
 

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.sky.mapper.ReviewMapper">
+
+    <!-- 不再JOIN user/orders表——order_number/user_name/user_avatar是提交评价时快照下来的自己的列，
+         评价库物理拆开之后这两个表根本不在这个库里 -->
+    <select id="pageQuery" resultType="com.sky.vo.ReviewVO">
+        select
+            id, order_id as orderId, order_number as orderNumber, shop_id as shopId, user_id as userId,
+            user_name as userName, user_avatar as userAvatar,
+            rating, content, images, reply, reply_time as replyTime, create_time as createTime
+        from review
+        <where>
+            <if test="shopId != null">
+                and shop_id = #{shopId}
+            </if>
+            <if test="rating != null">
+                and rating = #{rating}
+            </if>
+        </where>
+        order by create_time desc
+    </select>
+
+    <update id="updateReply">
+        update review
+        set reply = #{reply}, reply_time = #{replyTime}
+        where id = #{id} and shop_id = #{shopId}
+    </update>
+
+    <select id="getShopRatingSummary" resultType="com.sky.vo.ShopRatingSummaryVO">
+        select avg(rating) as avgRating, count(*) as reviewCount
+        from review
+        where shop_id = #{shopId}
+    </select>
+
+    <select id="getShopRatingSummaryBatch" resultType="com.sky.vo.ShopRatingSummaryVO">
+        select shop_id as shopId, avg(rating) as avgRating, count(*) as reviewCount
+        from review
+        where shop_id in
+        <foreach collection="shopIds" item="shopId" open="(" separator="," close=")">
+            #{shopId}
+        </foreach>
+        group by shop_id
+    </select>
+
+</mapper>

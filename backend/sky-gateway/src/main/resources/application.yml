@@ -16,7 +16,68 @@ spring:
           uri: lb://sky-ai-service
           predicates:
             - Path=/user/ai/**
-        # 其余所有流量（/admin/**、/user/**其它路径、/notify/**、/ws/**）走单体sky-server
+        - id: sky-invoice-service
+          uri: lb://sky-invoice-service
+          predicates:
+            - Path=/user/invoice/**
+        - id: sky-review-service-user
+          uri: lb://sky-review-service
+          predicates:
+            - Path=/user/review/**
+        - id: sky-review-service-admin
+          uri: lb://sky-review-service
+          predicates:
+            - Path=/admin/review/**
+        - id: sky-product-service-dish-user
+          uri: lb://sky-product-service
+          predicates:
+            - Path=/user/dish/**
+        - id: sky-product-service-dish-admin
+          uri: lb://sky-product-service
+          predicates:
+            - Path=/admin/dish/**
+        - id: sky-product-service-setmeal-user
+          uri: lb://sky-product-service
+          predicates:
+            - Path=/user/setmeal/**
+        - id: sky-product-service-setmeal-admin
+          uri: lb://sky-product-service
+          predicates:
+            - Path=/admin/setmeal/**
+        - id: sky-product-service-category-user
+          uri: lb://sky-product-service
+          predicates:
+            - Path=/user/category/**
+        - id: sky-product-service-category-admin
+          uri: lb://sky-product-service
+          predicates:
+            - Path=/admin/category/**
+        - id: sky-order-service-order-user
+          uri: lb://sky-order-service
+          predicates:
+            - Path=/user/order/**
+        - id: sky-order-service-order-admin
+          uri: lb://sky-order-service
+          predicates:
+            - Path=/admin/order/**
+        - id: sky-order-service-shop-user
+          uri: lb://sky-order-service
+          predicates:
+            - Path=/user/shop/**
+        - id: sky-order-service-shop-admin
+          uri: lb://sky-order-service
+          predicates:
+            - Path=/admin/shop/**
+        - id: sky-order-service-ws
+          uri: lb://sky-order-service
+          predicates:
+            - Path=/ws/**
+        - id: sky-order-service-notify
+          uri: lb://sky-order-service
+          predicates:
+            - Path=/notify/**
+        # 其余所有流量（/admin/**、/user/**其它路径）走单体sky-server：
+        # 员工管理、用户资料、地址簿、购物车、报表统计等仍在sky-server
         - id: sky-server
           uri: lb://sky-server
           predicates:

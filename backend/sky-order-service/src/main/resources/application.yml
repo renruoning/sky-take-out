@@ -1,0 +1,68 @@
+server:
+  port: 8096
+
+spring:
+  profiles:
+    active: dev
+  # PageHelperAutoConfiguration在这个Spring Boot版本下会触发循环引用（sky-server/sky-review-service/
+  # sky-product-service都遇到过、也是这么解决的），不是这次拆分引入的新问题
+  main:
+    allow-circular-references: true
+  application:
+    name: sky-order-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${sky.datasource.host}:${sky.datasource.port}/${sky.datasource.database}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${sky.datasource.username}
+    password: ${sky.datasource.password}
+  redis:
+    password: ${sky.redis.password}
+    database: ${sky.redis.database}
+    sentinel:
+      master: ${sky.redis.sentinel-master}
+      nodes: ${sky.redis.sentinel-nodes}
+  rabbitmq:
+    host: ${sky.rabbitmq.host}
+    port: ${sky.rabbitmq.port}
+    username: ${sky.rabbitmq.username}
+    password: ${sky.rabbitmq.password}
+    virtual-host: ${sky.rabbitmq.virtual-host}
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.sky.entity
+  configuration:
+    map-underscore-to-camel-case: true
+
+logging:
+  level:
+    com:
+      sky:
+        mapper: debug
+        service: info
+        controller: info
+
+sky:
+  jwt:
+    admin-secret-key: itcast
+    admin-ttl: 36000000
+    admin-token-name: token
+    user-secret-key: itheima
+    user-ttl: 7200000
+    user-token-name: authentication
+  # WeChatPayUtil是sky-common里的@Component，会被自动扫描进来——payment()现在直接跳过真实微信支付
+  # 走本地mock（没有商户资质），这几个值实际不会被调用到，配上只是为了避免@ConfigurationProperties绑定空值的意外
+  wechat:
+    appid: ${sky.wechat.appid}
+    secret: ${sky.wechat.secret}
+    mchid: ${sky.wechat.mchid}
+    mchSerialNo: ${sky.wechat.mchSerialNo}
+    apiV3Key: ${sky.wechat.apiV3Key}
+    privateKeyFilePath: ${sky.wechat.privateKeyFilePath}
+    weChatPayCertFilePath: ${sky.wechat.weChatPayCertFilePath}
+    notifyUrl: ${sky.wechat.notifyUrl}
+    refundNotifyUrl: ${sky.wechat.refundNotifyUrl}

@@ -13,6 +13,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import com.alibaba.fastjson.JSON;
+import com.sky.client.ProductClient;
 import com.sky.constant.MessageConstant;
 import com.sky.context.BaseContext;
 import com.sky.dto.ShoppingCartDTO;
@@ -20,8 +21,7 @@ import com.sky.entity.Dish;
 import com.sky.entity.Setmeal;
 import com.sky.entity.ShoppingCart;
 import com.sky.exception.ShoppingCartBusinessException;
-import com.sky.mapper.DishMapper;
-import com.sky.mapper.SetmealMapper;
+import com.sky.result.Result;
 import com.sky.service.ShoppingCartService;
 
 /**
@@ -42,13 +42,11 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
     private static final Duration CART_TTL = Duration.ofDays(7);
 
     private final StringRedisTemplate stringRedisTemplate;
-    private final DishMapper dishMapper;
-    private final SetmealMapper setmealMapper;
+    private final ProductClient productClient;
 
-    ShoppingCartServiceImpl(StringRedisTemplate stringRedisTemplate, DishMapper dishMapper, SetmealMapper setmealMapper) {
+    ShoppingCartServiceImpl(StringRedisTemplate stringRedisTemplate, ProductClient productClient) {
         this.stringRedisTemplate = stringRedisTemplate;
-        this.dishMapper = dishMapper;
-        this.setmealMapper = setmealMapper;
+        this.productClient = productClient;
     }
 
     /**
@@ -86,12 +84,16 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
         shoppingCart.setUserId(userId);
         Long dishId = shoppingCartDTO.getDishId();
         if (dishId != null) {
-            Dish dish = dishMapper.getById(dishId);
+            Result<Dish> dishResult = productClient.getDish(dishId);
+            Dish dish = (dishResult != null && dishResult.getCode() != null && dishResult.getCode() == 1)
+                    ? dishResult.getData() : null;
             shoppingCart.setName(dish.getName());
             shoppingCart.setImage(dish.getImage());
             shoppingCart.setAmount(dish.getPrice());
         } else {
-            Setmeal setmeal = setmealMapper.getById(shoppingCartDTO.getSetmealId());
+            Result<Setmeal> setmealResult = productClient.getSetmeal(shoppingCartDTO.getSetmealId());
+            Setmeal setmeal = (setmealResult != null && setmealResult.getCode() != null && setmealResult.getCode() == 1)
+                    ? setmealResult.getData() : null;
             shoppingCart.setName(setmeal.getName());
             shoppingCart.setImage(setmeal.getImage());
             shoppingCart.setAmount(setmeal.getPrice());
@@ -108,8 +110,12 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
      * @return
      */
     public List<ShoppingCart> showShoppingCart() {
+        return showShoppingCart(BaseContext.getCurrentId());
+    }
+
+    public List<ShoppingCart> showShoppingCart(Long userId) {
         HashOperations<String, String, String> hashOps = stringRedisTemplate.opsForHash();
-        Map<String, String> entries = hashOps.entries(cartKey(BaseContext.getCurrentId()));
+        Map<String, String> entries = hashOps.entries(cartKey(userId));
         List<ShoppingCart> list = new ArrayList<>();
         for (String json : entries.values()) {
             list.add(JSON.parseObject(json, ShoppingCart.class));
@@ -146,7 +152,11 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
      * 清空当前用户的购物车
      */
     public void cleanShoppingCart() {
-        stringRedisTemplate.delete(cartKey(BaseContext.getCurrentId()));
+        cleanShoppingCart(BaseContext.getCurrentId());
+    }
+
+    public void cleanShoppingCart(Long userId) {
+        stringRedisTemplate.delete(cartKey(userId));
     }
 
     /**
@@ -154,10 +164,13 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
      * 已存在的商品数量累加，不存在的直接新增。
      */
     public void addAll(List<ShoppingCart> items) {
+        addAll(BaseContext.getCurrentId(), items);
+    }
+
+    public void addAll(Long userId, List<ShoppingCart> items) {
         if (items == null || items.isEmpty()) {
             return;
         }
-        Long userId = BaseContext.getCurrentId();
         String key = cartKey(userId);
         HashOperations<String, String, String> hashOps = stringRedisTemplate.opsForHash();
         for (ShoppingCart item : items) {

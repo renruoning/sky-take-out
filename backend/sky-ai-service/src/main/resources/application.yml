@@ -16,10 +16,11 @@ spring:
     username: ${sky.datasource.username}
     password: ${sky.datasource.password}
   redis:
-    host: ${sky.redis.host}
-    port: ${sky.redis.port}
     password: ${sky.redis.password}
     database: ${sky.redis.database}
+    sentinel:
+      master: ${sky.redis.sentinel-master}
+      nodes: ${sky.redis.sentinel-nodes}
 
 mybatis:
   mapper-locations: classpath:mapper/*.xml

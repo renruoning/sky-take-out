@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.sky.mapper.OrderMapper">
+
+    <insert id="insert" parameterType="Orders" useGeneratedKeys="true" keyProperty="id">
+        insert into orders
+        (shop_id, number, status, user_id, address_book_id, order_time, checkout_time, pay_method, pay_status,
+         amount, remark, user_name, user_avatar, phone, address, consignee, cancel_reason, rejection_reason, cancel_time,
+         estimated_delivery_time, delivery_status, delivery_time, pack_amount, tableware_number, tableware_status)
+        values
+        (#{shopId}, #{number}, #{status}, #{userId}, #{addressBookId}, #{orderTime}, #{checkoutTime}, #{payMethod}, #{payStatus},
+         #{amount}, #{remark}, #{userName}, #{userAvatar}, #{phone}, #{address}, #{consignee}, #{cancelReason}, #{rejectionReason}, #{cancelTime},
+         #{estimatedDeliveryTime}, #{deliveryStatus}, #{deliveryTime}, #{packAmount}, #{tablewareNumber}, #{tablewareStatus})
+    </insert>
+
+    <update id="update" parameterType="com.sky.entity.Orders">
+        update orders
+        <set>
+            <if test="cancelReason != null and cancelReason!='' ">
+                cancel_reason=#{cancelReason},
+            </if>
+            <if test="rejectionReason != null and rejectionReason!='' ">
+                rejection_reason=#{rejectionReason},
+            </if>
+            <if test="cancelTime != null">
+                cancel_time=#{cancelTime},
+            </if>
+            <if test="payStatus != null">
+                pay_status=#{payStatus},
+            </if>
+            <if test="payMethod != null">
+                pay_method=#{payMethod},
+            </if>
+            <if test="checkoutTime != null">
+                checkout_time=#{checkoutTime},
+            </if>
+            <if test="status != null">
+                status = #{status},
+            </if>
+            <if test="deliveryTime != null">
+                delivery_time = #{deliveryTime}
+            </if>
+        </set>
+        where id = #{id}
+    </update>
+
+    <select id="pageQuery" resultType="Orders">
+        select * from orders
+        <where>
+            <!-- 管理端查询会带shopId限定本店；用户端个人订单查询不传shopId（已由userId限定，无跨店泄露风险） -->
+            <if test="shopId != null">
+                and shop_id = #{shopId}
+            </if>
+            <if test="number != null and number!=''">
+                and number like concat('%',#{number},'%')
+            </if>
+            <if test="phone != null and phone!=''">
+                and phone like concat('%',#{phone},'%')
+            </if>
+            <if test="userId != null">
+                and user_id = #{userId}
+            </if>
+            <if test="status != null">
+                and status = #{status}
+            </if>
+            <if test="beginTime != null">
+                and order_time &gt;= #{beginTime}
+            </if>
+            <if test="endTime != null">
+                and order_time &lt;= #{endTime}
+            </if>
+        </where>
+        order by order_time desc
+    </select>
+
+    <select id="sumByMap" resultType="java.lang.Double" parameterType="map">
+        select sum(amount) from orders
+        <where>
+            <if test="shopId != null">
+                and shop_id = #{shopId}
+            </if>
+            <if test="status != null">
+                and status = #{status}
+            </if>
+            <if test="begin != null">
+                and order_time &gt;= #{begin}
+            </if>
+            <if test="end != null">
+                and order_time &lt;= #{end}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByMap" resultType="java.lang.Integer" parameterType="map">
+        select count(id) from orders
+        <where>
+            <if test="shopId != null">
+                and shop_id = #{shopId}
+            </if>
+            <if test="status != null">
+                and status = #{status}
+            </if>
+            <if test="begin != null">
+                and order_time &gt;= #{begin}
+            </if>
+            <if test="end != null">
+                and order_time &lt;= #{end}
+            </if>
+        </where>
+    </select>
+
+    <select id="sumAndCountGroupByDate" resultType="com.sky.dto.DailyOrderStatDTO">
+        select
+            date(order_time) as date,
+            count(id) as totalOrderCount,
+            sum(case when status = #{validStatus} then 1 else 0 end) as validOrderCount,
+            sum(case when status = #{validStatus} then amount else 0 end) as turnover
+        from orders
+        where order_time &gt;= #{begin} and order_time &lt;= #{end}
+        <if test="shopId != null">
+            and shop_id = #{shopId}
+        </if>
+        group by date(order_time)
+    </select>
+
+    <select id="countStatus" resultType="java.lang.Integer">
+        select count(id) from orders
+        <where>
+            and status = #{status}
+            <if test="shopId != null">
+                and shop_id = #{shopId}
+            </if>
+        </where>
+    </select>
+</mapper>

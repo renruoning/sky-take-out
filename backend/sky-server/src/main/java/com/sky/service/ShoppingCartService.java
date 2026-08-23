@@ -36,4 +36,16 @@ public interface ShoppingCartService {
      * @param items
      */
     void addAll(List<ShoppingCart> items);
+
+    /**
+     * 以下三个是显式传userId的版本，供InternalShoppingCartController用——
+     * sky-order-service下单/再来一单时需要操作购物车，但它自己的请求上下文里的BaseContext.getCurrentId()
+     * 是order-service自己JWT拦截器解析出来的、跟sky-server的BaseContext是两个不同服务里各自的ThreadLocal，
+     * 不能跨服务共享，所以内部RPC必须显式传userId，不能依赖BaseContext。
+     */
+    List<ShoppingCart> showShoppingCart(Long userId);
+
+    void cleanShoppingCart(Long userId);
+
+    void addAll(Long userId, List<ShoppingCart> items);
 }

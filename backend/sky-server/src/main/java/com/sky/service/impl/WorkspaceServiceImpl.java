@@ -1,22 +1,20 @@
 package com.sky.service.impl;
 
-import com.sky.constant.StatusConstant;
+import com.sky.client.OrderClient;
+import com.sky.client.ProductClient;
 import com.sky.context.BaseContext;
-import com.sky.entity.Orders;
-import com.sky.mapper.DishMapper;
-import com.sky.mapper.OrderMapper;
-import com.sky.mapper.SetmealMapper;
 import com.sky.mapper.UserMapper;
+import com.sky.result.Result;
 import com.sky.service.WorkspaceService;
 import com.sky.vo.BusinessDataVO;
 import com.sky.vo.DishOverViewVO;
+import com.sky.vo.OrderBusinessStatVO;
 import com.sky.vo.OrderOverViewVO;
 import com.sky.vo.SetmealOverViewVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -25,13 +23,11 @@ import java.util.Map;
 public class WorkspaceServiceImpl implements WorkspaceService {
 
     @Autowired
-    private OrderMapper orderMapper;
-    @Autowired
     private UserMapper userMapper;
     @Autowired
-    private DishMapper dishMapper;
+    private ProductClient productClient;
     @Autowired
-    private SetmealMapper setmealMapper;
+    private OrderClient orderClient;
 
     /**
      * 根据时间段统计营业数据
@@ -49,33 +45,29 @@ public class WorkspaceServiceImpl implements WorkspaceService {
          */
 
         Long shopId = BaseContext.getCurrentShopId();
-        Map map = new HashMap();
-        map.put("shopId", shopId);
-        map.put("begin",begin);
-        map.put("end",end);
 
-        //查询总订单数
-        Integer totalOrderCount = orderMapper.countByMap(map);
-
-        map.put("status", Orders.COMPLETED);
-        //营业额
-        Double turnover = orderMapper.sumByMap(map);
-        turnover = turnover == null? 0.0 : turnover;
-
-        //有效订单数
-        Integer validOrderCount = orderMapper.countByMap(map);
+        // 订单相关的3个原始数字（总订单数/有效订单数/营业额）一次Feign往返拿齐，order/order_detail已经搬去了order-service
+        Result<OrderBusinessStatVO> statResult = orderClient.getBusinessStats(shopId, begin, end);
+        OrderBusinessStatVO stat = (statResult != null && statResult.getCode() != null && statResult.getCode() == 1)
+                ? statResult.getData() : null;
+        Integer totalOrderCount = stat != null ? stat.getTotalOrderCount() : 0;
+        Integer validOrderCount = stat != null ? stat.getValidOrderCount() : 0;
+        Double turnover = stat != null && stat.getTurnover() != null ? stat.getTurnover() : 0.0;
 
         Double unitPrice = 0.0;
-
         Double orderCompletionRate = 0.0;
-        if(totalOrderCount != 0 && validOrderCount != 0){
+        if (totalOrderCount != 0 && validOrderCount != 0) {
             //订单完成率
             orderCompletionRate = validOrderCount.doubleValue() / totalOrderCount;
             //平均客单价
             unitPrice = turnover / validOrderCount;
         }
 
-        //新增用户数
+        //新增用户数：user表没有跟着订单一起搬，本地查询不变
+        Map map = new HashMap();
+        map.put("shopId", shopId);
+        map.put("begin", begin);
+        map.put("end", end);
         Integer newUsers = userMapper.countByMap(map);
 
         return BusinessDataVO.builder()
@@ -94,37 +86,8 @@ public class WorkspaceServiceImpl implements WorkspaceService {
      * @return
      */
     public OrderOverViewVO getOrderOverView() {
-        Map map = new HashMap();
-        map.put("shopId", BaseContext.getCurrentShopId());
-        map.put("begin", LocalDateTime.now().with(LocalTime.MIN));
-        map.put("status", Orders.TO_BE_CONFIRMED);
-
-        //待接单
-        Integer waitingOrders = orderMapper.countByMap(map);
-
-        //待派送
-        map.put("status", Orders.CONFIRMED);
-        Integer deliveredOrders = orderMapper.countByMap(map);
-
-        //已完成
-        map.put("status", Orders.COMPLETED);
-        Integer completedOrders = orderMapper.countByMap(map);
-
-        //已取消
-        map.put("status", Orders.CANCELLED);
-        Integer cancelledOrders = orderMapper.countByMap(map);
-
-        //全部订单
-        map.put("status", null);
-        Integer allOrders = orderMapper.countByMap(map);
-
-        return OrderOverViewVO.builder()
-                .waitingOrders(waitingOrders)
-                .deliveredOrders(deliveredOrders)
-                .completedOrders(completedOrders)
-                .cancelledOrders(cancelledOrders)
-                .allOrders(allOrders)
-                .build();
+        Result<OrderOverViewVO> result = orderClient.getOrderOverview(BaseContext.getCurrentShopId());
+        return (result != null && result.getCode() != null && result.getCode() == 1) ? result.getData() : null;
     }
 
     /**
@@ -133,18 +96,8 @@ public class WorkspaceServiceImpl implements WorkspaceService {
      * @return
      */
     public DishOverViewVO getDishOverView() {
-        Map map = new HashMap();
-        map.put("shopId", BaseContext.getCurrentShopId());
-        map.put("status", StatusConstant.ENABLE);
-        Integer sold = dishMapper.countByMap(map);
-
-        map.put("status", StatusConstant.DISABLE);
-        Integer discontinued = dishMapper.countByMap(map);
-
-        return DishOverViewVO.builder()
-                .sold(sold)
-                .discontinued(discontinued)
-                .build();
+        Result<DishOverViewVO> result = productClient.getDishOverview(BaseContext.getCurrentShopId());
+        return (result != null && result.getCode() != null && result.getCode() == 1) ? result.getData() : null;
     }
 
     /**
@@ -153,17 +106,7 @@ public class WorkspaceServiceImpl implements WorkspaceService {
      * @return
      */
     public SetmealOverViewVO getSetmealOverView() {
-        Map map = new HashMap();
-        map.put("shopId", BaseContext.getCurrentShopId());
-        map.put("status", StatusConstant.ENABLE);
-        Integer sold = setmealMapper.countByMap(map);
-
-        map.put("status", StatusConstant.DISABLE);
-        Integer discontinued = setmealMapper.countByMap(map);
-
-        return SetmealOverViewVO.builder()
-                .sold(sold)
-                .discontinued(discontinued)
-                .build();
+        Result<SetmealOverViewVO> result = productClient.getSetmealOverview(BaseContext.getCurrentShopId());
+        return (result != null && result.getCode() != null && result.getCode() == 1) ? result.getData() : null;
     }
 }

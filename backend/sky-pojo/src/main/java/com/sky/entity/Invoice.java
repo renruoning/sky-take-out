@@ -47,5 +47,13 @@ public class Invoice implements Serializable {
     //冗余存订单金额，避免发票和订单后续变化产生歧义
     private BigDecimal amount;
 
+    //以下三个是申请时从订单/店铺快照下来的展示字段（发票服务拆成独立库之后没法再跟orders/shop表JOIN，
+    //只能在申请这一刻通过RPC拿到订单摘要后存成自己的字段；发票本来就该是不可变的历史凭证，快照语义上也更合适）
+    private String orderNumber;
+
+    private LocalDateTime orderTime;
+
+    private String shopName;
+
     private LocalDateTime createTime;
 }

@@ -1,13 +1,12 @@
 package com.sky.service.impl;
 
+import com.sky.client.OrderClient;
 import com.sky.context.BaseContext;
 import com.sky.dto.DailyOrderStatDTO;
 import com.sky.dto.DailyUserStatDTO;
 import com.sky.dto.GoodsSalesDTO;
-import com.sky.entity.Orders;
-import com.sky.mapper.OrderDetailMapper;
-import com.sky.mapper.OrderMapper;
 import com.sky.mapper.UserMapper;
+import com.sky.result.Result;
 import com.sky.service.ReportService;
 import com.sky.service.WorkspaceService;
 import com.sky.vo.BusinessDataVO;
@@ -37,15 +36,13 @@ import java.util.stream.Collectors;
 @Service
 public class ReportServiceImpl implements ReportService {
 
-    private final OrderMapper orderMapper;
     private final UserMapper userMapper;
-    private final OrderDetailMapper orderDetailMapper;
+    private final OrderClient orderClient;
     private final WorkspaceService workspaceService;
 
-    ReportServiceImpl(OrderMapper orderMapper, UserMapper userMapper, OrderDetailMapper orderDetailMapper, WorkspaceService workspaceService) {
-        this.orderMapper = orderMapper;
+    ReportServiceImpl(UserMapper userMapper, OrderClient orderClient, WorkspaceService workspaceService) {
         this.userMapper = userMapper;
-        this.orderDetailMapper = orderDetailMapper;
+        this.orderClient = orderClient;
         this.workspaceService = workspaceService;
     }
 
@@ -161,11 +158,9 @@ public class ReportServiceImpl implements ReportService {
      * @return
      */
     public SalesTop10ReportVO salesTop10Statistics(LocalDate begin, LocalDate end) {
-        List<GoodsSalesDTO> salesTop10 = orderDetailMapper.getSalesTop10(
-                Orders.COMPLETED,
-                LocalDateTime.of(begin, LocalTime.MIN),
-                LocalDateTime.of(end, LocalTime.MAX),
-                BaseContext.getCurrentShopId());
+        Result<List<GoodsSalesDTO>> result = orderClient.getSalesTop10(BaseContext.getCurrentShopId(), begin, end);
+        List<GoodsSalesDTO> salesTop10 = (result != null && result.getCode() != null && result.getCode() == 1 && result.getData() != null)
+                ? result.getData() : new ArrayList<>();
 
         List<String> nameList = salesTop10.stream().map(GoodsSalesDTO::getName).collect(Collectors.toList());
         List<Integer> numberList = salesTop10.stream().map(GoodsSalesDTO::getNumber).collect(Collectors.toList());
@@ -327,9 +322,9 @@ public class ReportServiceImpl implements ReportService {
      * 一次查询获取区间内每天的订单统计（总数/有效数/营业额），代替按天循环查询
      */
     private Map<LocalDate, DailyOrderStatDTO> getDailyOrderStatMap(LocalDate begin, LocalDate end) {
-        List<DailyOrderStatDTO> statList = orderMapper.sumAndCountGroupByDate(
-                LocalDateTime.of(begin, LocalTime.MIN), LocalDateTime.of(end, LocalTime.MAX), Orders.COMPLETED,
-                BaseContext.getCurrentShopId());
+        Result<List<DailyOrderStatDTO>> result = orderClient.getDailyStats(BaseContext.getCurrentShopId(), begin, end);
+        List<DailyOrderStatDTO> statList = (result != null && result.getCode() != null && result.getCode() == 1 && result.getData() != null)
+                ? result.getData() : new ArrayList<>();
         return statList.stream().collect(Collectors.toMap(DailyOrderStatDTO::getDate, s -> s));
     }
 }

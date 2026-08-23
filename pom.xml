@@ -18,6 +18,10 @@
         <module>backend/sky-server</module>
         <module>backend/sky-ai-service</module>
         <module>backend/sky-gateway</module>
+        <module>backend/sky-invoice-service</module>
+        <module>backend/sky-review-service</module>
+        <module>backend/sky-product-service</module>
+        <module>backend/sky-order-service</module>
     </modules>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
