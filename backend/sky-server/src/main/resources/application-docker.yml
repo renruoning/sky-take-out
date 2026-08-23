@@ -1,0 +1,43 @@
+spring:
+  cloud:
+    nacos:
+      discovery:
+        server-addr: host.docker.internal:8848
+        ip: host.docker.internal
+
+sky:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    host: host.docker.internal
+    port: 3306
+    database: sky_take_out
+    username: root
+    password: root
+  alioss:
+    endpoint: oss-ap-southeast-1.aliyuncs.com
+    access-key-id: LTAI5t9suJ1JqLC3G38s54k7
+    access-key-secret: K65BNS0zO5bBE44xceXFqcvac7ay3L
+    bucket-name: sky-takeout-renruoning
+  redis:
+    sentinel-master: mymaster
+    sentinel-nodes: host.docker.internal:26379,host.docker.internal:26380,host.docker.internal:26381
+    password:
+    database: 1
+  rabbitmq:
+    host: host.docker.internal
+    port: 5672
+    username: guest
+    password: guest
+    virtual-host: /
+  security:
+    field-encryption-key: ${FIELD_ENCRYPTION_KEY:sky-take-out-dev-default-key-CHANGE-ME}
+  wechat:
+    appid: wxb8939b9e2adefefb
+    secret: 786d39fb77e540cefc7505ba05a06511
+    mchid: 156141433
+    mchSerialNo: 4B3B3DC35414AD50B1B755BAF8DE9CC7CF407606
+    apiV3Key: CZBK51236435wxpay435434323FFDuv3
+    privateKeyFilePath: D:\certs\apiclient_key.pem
+    weChatPayCertFilePath: D:\certs\wechat_pay_cert.pem
+    notifyUrl: http://69d6a65b.r37.cpolar.top/wechat/notify
+    refundNotifyUrl: http://69d6a65b.r37.cpolar.top/wechat/refund-notify

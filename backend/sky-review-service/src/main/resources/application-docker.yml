@@ -1,0 +1,19 @@
+spring:
+  cloud:
+    nacos:
+      discovery:
+        server-addr: host.docker.internal:8848
+        ip: host.docker.internal
+
+sky:
+  datasource:
+    host: host.docker.internal
+    port: 3306
+    database: sky_review_service
+    username: root
+    password: root
+  redis:
+    sentinel-master: mymaster
+    sentinel-nodes: host.docker.internal:26379,host.docker.internal:26380,host.docker.internal:26381
+    password:
+    database: 1

@@ -1,0 +1,35 @@
+spring:
+  cloud:
+    nacos:
+      discovery:
+        server-addr: host.docker.internal:8848
+        ip: host.docker.internal
+
+sky:
+  datasource:
+    host: host.docker.internal
+    port: 3306
+    database: sky_order_service
+    username: root
+    password: root
+  redis:
+    sentinel-master: mymaster
+    sentinel-nodes: host.docker.internal:26379,host.docker.internal:26380,host.docker.internal:26381
+    password:
+    database: 1
+  rabbitmq:
+    host: host.docker.internal
+    port: 5672
+    username: guest
+    password: guest
+    virtual-host: /
+  wechat:
+    appid: wxb8939b9e2adefefb
+    secret: 786d39fb77e540cefc7505ba05a06511
+    mchid: 156141433
+    mchSerialNo: 4B3B3DC35414AD50B1B755BAF8DE9CC7CF407606
+    apiV3Key: CZBK51236435wxpay435434323FFDuv3
+    privateKeyFilePath: D:\certs\apiclient_key.pem
+    weChatPayCertFilePath: D:\certs\wechat_pay_cert.pem
+    notifyUrl: http://69d6a65b.r37.cpolar.top/wechat/notify
+    refundNotifyUrl: http://69d6a65b.r37.cpolar.top/wechat/refund-notify
