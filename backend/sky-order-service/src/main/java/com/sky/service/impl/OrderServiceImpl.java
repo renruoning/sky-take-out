@@ -23,6 +23,7 @@ import com.sky.mapper.OrderDetailMapper;
 import com.sky.mapper.OrderMapper;
 import com.sky.result.Result;
 import com.sky.result.PageResult;
+import com.sky.result.CursorPageResult;
 import com.sky.service.OrderService;
 import com.sky.utils.WeChatPayUtil;
 import com.sky.vo.OrderPaymentVO;
@@ -31,6 +32,8 @@ import com.sky.vo.OrderSubmitVO;
 import com.sky.vo.OrderVO;
 import com.sky.config.RabbitMQConfig;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.BeanUtils;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -46,6 +49,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -58,18 +62,60 @@ public class OrderServiceImpl implements OrderService {
     private final WeChatPayUtil weChatPayUtil;
     private final RabbitTemplate rabbitTemplate;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final RedissonClient redissonClient;
 
     private static final String SUBMIT_LOCK_PREFIX = "lock:order:submit:";
     private static final Duration SUBMIT_LOCK_TTL = Duration.ofSeconds(5);
 
+    // 取消订单的分布式锁：用户手动取消（userCancelById）、管理端取消（cancel）、支付超时自动取消
+    // （OrderTimeoutListener.handleOrderTimeout）三条路径都是"读一次状态、判断能不能取消、再写"，
+    // 互相之间完全没有互斥——真赶上两条路径同时打同一个订单（最常见的是用户手动取消和超时自动取消撞车），
+    // 两边都读到"还能取消"的旧状态，都各自发一条UPDATE，取消原因/时间会被后写的那次悄悄覆盖掉，
+    // 属于同一个订单状态但被安上了错误的取消原因，这是真实存在但目前还没暴露出来的数据正确性问题
+    // （P4以后order-service真扩多实例才会让这个窗口变得更容易撞上）。P0的SETNX只解决了单实例下
+    // "同一用户重复点提交"这个场景，跟这里要挡的竞态不是一回事，所以另开一把锁，不复用那把。
+    static final String CANCEL_LOCK_PREFIX = "lock:order:cancel:";
+    private static final long CANCEL_LOCK_WAIT_SECONDS = 2;
+
     OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, SkyServerClient skyServerClient,
-                      WeChatPayUtil weChatPayUtil, RabbitTemplate rabbitTemplate, RedisTemplate<String, Object> redisTemplate) {
+                      WeChatPayUtil weChatPayUtil, RabbitTemplate rabbitTemplate, RedisTemplate<String, Object> redisTemplate,
+                      RedissonClient redissonClient) {
         this.orderMapper = orderMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.skyServerClient = skyServerClient;
         this.weChatPayUtil = weChatPayUtil;
         this.rabbitTemplate = rabbitTemplate;
         this.redisTemplate = redisTemplate;
+        this.redissonClient = redissonClient;
+    }
+
+    /**
+     * 取消订单场景专用：抢到锁执行action并保证释放；抢不到锁说明这个订单同一时刻正被另一条取消路径处理，
+     * 直接拒绝而不是让两边都以为自己能改，这是HTTP路径（用户/管理端手动取消）用的版本，
+     * 抢不到会抛异常让调用方看到明确的"正在处理中"提示。Redisson本身不可达时fail-open：
+     * 记日志、跳过加锁直接执行，不能因为一个辅助组件挂了就连取消订单这个基础功能都用不了。
+     */
+    private void runWithCancelLock(Long orderId, Runnable action) {
+        RLock lock;
+        boolean acquired;
+        try {
+            lock = redissonClient.getLock(CANCEL_LOCK_PREFIX + orderId);
+            acquired = lock.tryLock(CANCEL_LOCK_WAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.error("获取订单{}取消锁失败，Redisson不可达，本次放弃加锁直接执行（fail-open）", orderId, e);
+            action.run();
+            return;
+        }
+        if (!acquired) {
+            throw new OrderBusinessException(MessageConstant.ORDER_PROCESSING_CONFLICT);
+        }
+        try {
+            action.run();
+        } finally {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
     }
 
     /**
@@ -269,35 +315,41 @@ public class OrderServiceImpl implements OrderService {
      * @param status
      * @return
      */
-    public PageResult pageQuery4User(int pageNum, int pageSize, Integer status) {
-        // 设置分页
-        PageHelper.startPage(pageNum, pageSize);
+    /**
+     * 游标分页：不做COUNT(*)，按(order_time desc, id desc)排keyset。cursorId为null查第一页，
+     * 否则查"排在上一页最后一条记录之后"的下一批——historyOrders这种连续下滑的场景不需要跳页，
+     * 换掉offset分页省下"翻到第N页都要先数一遍总数"这个随数据量增长而变贵的开销（见REPORT.md）
+     */
+    public CursorPageResult pageQuery4User(Long cursorId, int limit, Integer status) {
+        Long userId = BaseContext.getCurrentId();
 
-        OrdersPageQueryDTO ordersPageQueryDTO = new OrdersPageQueryDTO();
-        ordersPageQueryDTO.setUserId(BaseContext.getCurrentId());
-        ordersPageQueryDTO.setStatus(status);
+        // 客户端只传cursorId，不传orderTime——JSON响应里的orderTime是格式化到分钟的（见JacksonObjectMapper），
+        // 拿这个截断过的字符串去跟数据库里精确到秒的order_time比较会算错分页边界，所以这里用cursorId
+        // 反查一次这条记录真实的order_time，用数据库里的精确值做keyset比较，不依赖客户端回传的精度
+        LocalDateTime cursorOrderTime = null;
+        if (cursorId != null) {
+            Orders cursorOrder = orderMapper.getById(cursorId);
+            if (cursorOrder != null) {
+                cursorOrderTime = cursorOrder.getOrderTime();
+            }
+            // 查不到（比如传了个不存在的id）就当成没传cursor，退化成查第一页，不抛异常
+        }
 
-        // 分页条件查询
-        Page<Orders> page = orderMapper.pageQuery(ordersPageQueryDTO);
+        // 多查1条，用来判断是否还有下一页，不用额外发一次COUNT
+        List<Orders> rows = orderMapper.pageQueryByCursorForUser(userId, status, cursorOrderTime, cursorId, limit + 1);
+
+        boolean hasMore = rows.size() > limit;
+        List<Orders> pageRows = hasMore ? rows.subList(0, limit) : rows;
 
         List<OrderVO> list = new ArrayList<>();
-
-        // 查询出订单明细，并封装入OrderVO进行响应
-        if (page != null && page.getTotal() > 0) {
-            for (Orders orders : page) {
-                Long orderId = orders.getId();
-
-                // 查询订单明细
-                List<OrderDetail> orderDetails = orderDetailMapper.getByOrderId(orderId);
-
-                OrderVO orderVO = new OrderVO();
-                BeanUtils.copyProperties(orders, orderVO);
-                orderVO.setOrderDetailList(orderDetails);
-
-                list.add(orderVO);
-            }
+        for (Orders orders : pageRows) {
+            List<OrderDetail> orderDetails = orderDetailMapper.getByOrderId(orders.getId());
+            OrderVO orderVO = new OrderVO();
+            BeanUtils.copyProperties(orders, orderVO);
+            orderVO.setOrderDetailList(orderDetails);
+            list.add(orderVO);
         }
-        return new PageResult(page.getTotal(), list);
+        return new CursorPageResult(list, hasMore);
     }
 
     /**
@@ -325,33 +377,35 @@ public class OrderServiceImpl implements OrderService {
      * @param id
      */
     public void userCancelById(Long id) throws Exception {
-        // 根据id查询订单
-        Orders ordersDB = orderMapper.getById(id);
+        // "读状态判断能不能取消、再写"这整段要在锁里做，不能只锁最后的update——
+        // 不然还是会出现两条路径都读到"能取消"的旧状态、各自都认为自己能写的竞态窗口
+        runWithCancelLock(id, () -> {
+            Orders ordersDB = orderMapper.getById(id);
 
-        // 校验订单是否存在
-        if (ordersDB == null) {
-            throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
-        }
+            if (ordersDB == null) {
+                throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
+            }
 
-        //订单状态 1待付款 2待接单 3已接单 4派送中 5已完成 6已取消
-        if (ordersDB.getStatus() > 2) {
-            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
-        }
+            //订单状态 1待付款 2待接单 3已接单 4派送中 5已完成 6已取消
+            if (ordersDB.getStatus() > 2) {
+                throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+            }
 
-        Orders orders = new Orders();
-        orders.setId(ordersDB.getId());
+            Orders orders = new Orders();
+            orders.setId(ordersDB.getId());
 
-        // 订单处于待接单状态下取消，需要进行退款
-        if (ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
-            // 暂无微信支付商户资质，无法调用真实的微信退款接口，直接跳过并标记为已退款，逻辑同 payment() 里的处理
-            orders.setPayStatus(Orders.REFUND);
-        }
+            // 订单处于待接单状态下取消，需要进行退款
+            if (ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
+                // 暂无微信支付商户资质，无法调用真实的微信退款接口，直接跳过并标记为已退款，逻辑同 payment() 里的处理
+                orders.setPayStatus(Orders.REFUND);
+            }
 
-        // 更新订单状态、取消原因、取消时间
-        orders.setStatus(Orders.CANCELLED);
-        orders.setCancelReason("用户取消");
-        orders.setCancelTime(LocalDateTime.now());
-        orderMapper.update(orders);
+            // 更新订单状态、取消原因、取消时间
+            orders.setStatus(Orders.CANCELLED);
+            orders.setCancelReason("用户取消");
+            orders.setCancelTime(LocalDateTime.now());
+            orderMapper.update(orders);
+        });
     }
 
     /**
@@ -525,24 +579,27 @@ public class OrderServiceImpl implements OrderService {
      * @param ordersCancelDTO
      */
     public void cancel(OrdersCancelDTO ordersCancelDTO) throws Exception {
-        // 根据id查询订单
+        // 归属校验不用放进锁里（不涉及订单状态的读-判断-写），锁只包住真正有竞态的这一段
         checkOrderBelongsToCurrentShop(ordersCancelDTO.getId());
-        Orders ordersDB = orderMapper.getById(ordersCancelDTO.getId());
 
-        //支付状态
-        Integer payStatus = ordersDB.getPayStatus();
-        if (payStatus.equals(Orders.PAID)) {
-            // 暂无微信支付商户资质，无法调用真实的微信退款接口，跳过并只记录日志
-            log.info("订单{}已支付，管理端取消需要退款（未接入真实微信支付，跳过实际退款调用）", ordersDB.getNumber());
-        }
+        runWithCancelLock(ordersCancelDTO.getId(), () -> {
+            Orders ordersDB = orderMapper.getById(ordersCancelDTO.getId());
 
-        // 管理端取消订单需要退款，根据订单id更新订单状态、取消原因、取消时间
-        Orders orders = new Orders();
-        orders.setId(ordersCancelDTO.getId());
-        orders.setStatus(Orders.CANCELLED);
-        orders.setCancelReason(ordersCancelDTO.getCancelReason());
-        orders.setCancelTime(LocalDateTime.now());
-        orderMapper.update(orders);
+            //支付状态
+            Integer payStatus = ordersDB.getPayStatus();
+            if (payStatus.equals(Orders.PAID)) {
+                // 暂无微信支付商户资质，无法调用真实的微信退款接口，跳过并只记录日志
+                log.info("订单{}已支付，管理端取消需要退款（未接入真实微信支付，跳过实际退款调用）", ordersDB.getNumber());
+            }
+
+            // 管理端取消订单需要退款，根据订单id更新订单状态、取消原因、取消时间
+            Orders orders = new Orders();
+            orders.setId(ordersCancelDTO.getId());
+            orders.setStatus(Orders.CANCELLED);
+            orders.setCancelReason(ordersCancelDTO.getCancelReason());
+            orders.setCancelTime(LocalDateTime.now());
+            orderMapper.update(orders);
+        });
     }
 
     /**

@@ -571,21 +571,36 @@ async function submitOrder(total){
 // ---------------- 我的订单 ----------------
 const ORDER_STATUS_TEXT = {1:'待付款', 2:'待接单', 3:'已接单', 4:'派送中', 5:'已完成', 6:'已取消'};
 
-async function renderOrders(){
-  const body = document.getElementById('modalBody');
-  body.innerHTML = '加载中...';
-  try {
-    const result = await api('/user/order/historyOrders', { page: 1, pageSize: 20 });
-    const list = result.records;
-    if (!list.length) { body.innerHTML = '<div class="empty">还没有订单</div>'; return; }
-    body.innerHTML = list.map(o => `
+// 游标分页：orderListState记录已加载的订单和翻页用的cursorId（上一批最后一条订单自己的id），
+// 不再是page/pageSize——后端历史订单查询已经从offset分页换成keyset分页（见REPORT.md）
+let orderListState = { items: [], cursorId: undefined, hasMore: false };
+
+function renderOrderItem(o){
+  return `
       <div class="order-item">
         <div class="head"><span>订单号 ${esc(o.number)}</span><span>${esc(o.orderTime || '')}</span></div>
         <div>￥${o.amount} <span class="order-status">${ORDER_STATUS_TEXT[o.status] || o.status}</span></div>
         ${(o.status === 1 || o.status === 2) ? `<button class="danger-link" style="margin-top:6px;" onclick="cancelOrder(${o.id})">取消订单</button>` : ''}
         ${o.status === 5 ? `<button class="danger-link" style="margin-top:6px;color:var(--accent);" onclick="toggleReviewForm(${o.id}, this)">评价</button>` : ''}
         ${o.payStatus === 1 ? `<button class="danger-link" style="margin-top:6px;color:var(--accent);" onclick="toggleInvoiceForm(${o.id}, this)">开发票</button>` : ''}
-      </div>`).join('');
+      </div>`;
+}
+
+async function renderOrders(reset = true){
+  const body = document.getElementById('modalBody');
+  if (reset) {
+    orderListState = { items: [], cursorId: undefined, hasMore: false };
+    body.innerHTML = '加载中...';
+  }
+  try {
+    const result = await api('/user/order/historyOrders', { cursorId: orderListState.cursorId, limit: 10 });
+    const list = result.records;
+    orderListState.items = orderListState.items.concat(list);
+    orderListState.hasMore = result.hasMore;
+    if (list.length) orderListState.cursorId = list[list.length - 1].id;
+    if (!orderListState.items.length) { body.innerHTML = '<div class="empty">还没有订单</div>'; return; }
+    body.innerHTML = orderListState.items.map(renderOrderItem).join('')
+      + (orderListState.hasMore ? `<button class="primary-btn" style="margin-top:10px;width:100%;" onclick="renderOrders(false)">加载更多</button>` : '');
   } catch (e) {
     body.innerHTML = `<div class="err-banner">${esc(e.message)}</div>`;
   }

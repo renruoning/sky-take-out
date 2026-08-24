@@ -41,6 +41,22 @@ public interface OrderMapper {
     Page<Orders> pageQuery(OrdersPageQueryDTO ordersPageQueryDTO);
 
     /**
+     * 用户历史订单的游标分页查询——按(order_time desc, id desc)排序，不做COUNT(*)，
+     * 查limit+1条由调用方判断是否还有下一页（见OrderServiceImpl.pageQuery4User）。
+     * cursorOrderTime为null表示查第一页
+     * @param userId
+     * @param status
+     * @param cursorOrderTime
+     * @param cursorId
+     * @param limit
+     */
+    List<Orders> pageQueryByCursorForUser(@Param("userId") Long userId,
+                                           @Param("status") Integer status,
+                                           @Param("cursorOrderTime") LocalDateTime cursorOrderTime,
+                                           @Param("cursorId") Long cursorId,
+                                           @Param("limit") int limit);
+
+    /**
      * 根据id查询订单
      * @param id
      */

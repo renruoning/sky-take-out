@@ -4,7 +4,7 @@ import com.sky.annotation.RateLimit;
 import com.sky.dto.OrdersPaymentDTO;
 import com.sky.dto.OrdersSubmitDTO;
 import com.sky.enumeration.RateLimitKeyType;
-import com.sky.result.PageResult;
+import com.sky.result.CursorPageResult;
 import com.sky.result.Result;
 import com.sky.service.OrderService;
 import com.sky.vo.OrderPaymentVO;
@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController("userOrderController")
@@ -59,16 +60,22 @@ public class OrderController {
     }
 
     /**
-     * 历史订单查询
+     * 历史订单查询——游标分页（keyset pagination），不传cursorId查第一页，之后每次把上一页最后一条记录
+     * 自身的id原样传回来查下一页。只传id、不用客户端回传orderTime——orderTime在JSON响应里是格式化到分钟的
+     * （见sky-common的JacksonObjectMapper），拿这个截断过的字符串去跟数据库里精确到秒的order_time比较
+     * 会算错边界，所以服务端拿到cursorId后自己去查一次这条记录真实的order_time，不依赖客户端回传的精度
      *
-     * @param page
-     * @param pageSize
+     * @param cursorId 上一页最后一条记录的id，第一页不传
+     * @param limit    每页条数，默认10
      * @param status   订单状态 1待付款 2待接单 3已接单 4派送中 5已完成 6已取消
      * @return
      */
     @GetMapping("/historyOrders")
-    public Result<PageResult> page(int page, int pageSize, Integer status) {
-        PageResult pageResult = orderService.pageQuery4User(page, pageSize, status);
+    public Result<CursorPageResult> page(
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(defaultValue = "10") int limit,
+            Integer status) {
+        CursorPageResult pageResult = orderService.pageQuery4User(cursorId, limit, status);
         return Result.success(pageResult);
     }
 

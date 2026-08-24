@@ -92,6 +92,16 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- 取消订单场景的分布式锁（RLock）——用户手动取消、后台超时自动取消、管理端取消三条路径
+             可能同时打同一个订单，这三个都是不带锁的"读状态再写"，光靠status校验会漏出竞态窗口，
+             需要真正互斥。只用核心库不用redisson-spring-boot-starter，自己写RedissonConfiguration
+             显式接Sentinel，跟这个服务其它Redis相关配置一样，不依赖自动配置的黑盒行为 -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>3.27.2</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-cache</artifactId>

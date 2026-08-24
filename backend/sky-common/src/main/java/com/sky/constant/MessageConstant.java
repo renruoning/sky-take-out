@@ -46,6 +46,7 @@ public class MessageConstant {
     public static final String INVOICE_TAX_NUMBER_REQUIRED = "单位抬头必须填写纳税人识别号";
     public static final String ORDER_SUBMIT_DUPLICATE = "请勿重复提交订单";
     public static final String ORDER_ALREADY_PAID = "订单已支付，请勿重复支付";
+    public static final String ORDER_PROCESSING_CONFLICT = "订单正在处理中，请稍后重试";
     public static final String AI_CHAT_RATE_LIMITED = "消息发送过于频繁，请稍后再试";
     public static final String WEBSOCKET_AUTH_FAILED = "WebSocket连接鉴权失败";
 

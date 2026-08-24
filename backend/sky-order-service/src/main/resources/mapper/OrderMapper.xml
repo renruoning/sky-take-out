@@ -74,6 +74,19 @@
         order by order_time desc
     </select>
 
+    <select id="pageQueryByCursorForUser" resultType="Orders">
+        select * from orders
+        where user_id = #{userId}
+        <if test="status != null">
+            and status = #{status}
+        </if>
+        <if test="cursorOrderTime != null">
+            and (order_time &lt; #{cursorOrderTime} or (order_time = #{cursorOrderTime} and id &lt; #{cursorId}))
+        </if>
+        order by order_time desc, id desc
+        limit #{limit}
+    </select>
+
     <select id="sumByMap" resultType="java.lang.Double" parameterType="map">
         select sum(amount) from orders
         <where>

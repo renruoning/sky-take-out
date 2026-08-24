@@ -68,5 +68,11 @@ CREATE TABLE `orders` (
   `tableware_status` tinyint(1) NOT NULL DEFAULT '1' COMMENT '餐具数量状态  1按餐量提供  0选择具体数量',
   PRIMARY KEY (`id`),
   KEY `idx_orders_status_order_time` (`status`,`order_time`),
-  KEY `idx_orders_user_id` (`user_id`)
+  KEY `idx_orders_user_id` (`user_id`),
+  -- historyOrders游标分页（WHERE user_id = ? AND (order_time,id)在keyset之前 ORDER BY order_time DESC, id DESC）
+  -- 用的联合索引，三列都要有才能让MySQL靠索引顺序满足完整排序、不落到Using filesort——
+  -- 最初只加了(user_id, order_time DESC)两列，游标查询的tie-break条件测出来还是走了filesort，
+  -- 补上id这一列才真正消除（见database/migration_orders_user_time_index.sql和
+  -- migration_orders_user_time_id_index.sql这两次迁移的说明）
+  KEY `idx_orders_user_time` (`user_id`,`order_time` DESC,`id` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8_bin COMMENT='订单表';
