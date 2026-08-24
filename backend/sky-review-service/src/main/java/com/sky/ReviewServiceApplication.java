@@ -7,9 +7,9 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.cloud.openfeign.EnableFeignClients;
 
-// @EnableCaching是因为ReviewServiceImpl.getShopRatingSummary()用了@Cacheable——sky-server那边这个注解
-// 挂在自定义的RedisConfiguration上，这个服务没有那么多自定义缓存配置，直接放主类上启用就够了，
-// Spring Boot会用spring-boot-starter-data-redis自动配置好的默认RedisCacheManager
+// @EnableCaching是因为ReviewServiceImpl.getShopRatingSummary()用了@Cacheable。CacheManager本身
+// 现在由config/RedisConfiguration提供（跟sky-server/sky-product-service/sky-order-service对齐，
+// 有TTL抖动防雪崩+Redis故障降级），不再是Spring Boot的默认CacheManager（默认没有TTL、故障直接抛异常）
 @SpringBootApplication
 @EnableDiscoveryClient
 @EnableFeignClients

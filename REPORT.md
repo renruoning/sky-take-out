@@ -1,4 +1,4 @@
-# TODO：面向生产环境的改造路线图
+# REPORT：面向生产环境的改造路线图与实测报告
 
 当前项目是单体应用 + 单个MySQL，能跑通完整业务闭环（多商户/多品类/购物车/下单/评价/发票/AI客服），但离真实工业级设计还有距离。这份清单按"如果这是一个要真正上线、要扛真实流量的项目，会按什么优先级去补"来排的，不是越花哨越好——排序本身就是"先保证不出错，再谈快，最后才谈架构升级"。
 
@@ -132,7 +132,72 @@
   - **实测验证**：7个容器全部构建成功、启动成功，Nacos里全部注册为`host.docker.internal:<各自端口>`（不是容器内网IP，验证了寻址设计确实生效）。全部通过网关跑了一遍代表性业务链路，跟宿主机进程那次验证的严格度一致：管理端登录（验证MySQL+Redis限流从容器里可用）、购物车加菜品（验证sky-server容器→sky-product-service容器的Feign调用）、完整下单→支付（验证MySQL写入、Redis SETNX幂等锁、RabbitMQ发布订单事件、`OrderEventNotifyListener`消费、WebSocket推送——这条最长的链路在容器里全部打通，真实连了一个WebSocket客户端确认收到来单提醒）、申请发票（验证invoice-service容器→order-service容器的反向Feign调用）。验证完之后把7个容器全部删掉，恢复成宿主机上跑java进程这个会话默认的开发方式，确认没有把日常开发流程切换掉。
   - **明确没做的部分（当时）**：docker-compose编排、K8s manifests、真正的多实例水平扩容验证——见下面这条，扩容验证这次已经做了（只做了发票服务这一个功能作为演示，没有铺开到全部7个服务）。
 - [x] **发票服务水平扩容演示**：选发票服务做演示是因为它是7个服务里状态最简单的一个——没有WebSocket、没有RabbitMQ，纯无状态REST+MySQL+Feign，理论上"配置驱动扩容"这条线在它身上验证成本最低。没有用docker-compose的`--scale`（那个功能需要动态端口分配，跟这个项目"容器内端口=宿主机发布端口"这套已经验证过的寻址方案不兼容——`--scale`出来的多个副本要嘛端口冲突要嘛拿到随机端口后没法让Nacos知道自己实际的宿主机可达端口），改成两个容器各自指定不同的固定端口（`SERVER_PORT=8093`和`SERVER_PORT=8193`，都1:1发布到宿主机），本质上是"配置里的实例数量"这条思路的一个不依赖compose的最小实现——要加第三个实例，再起一个换个端口的容器就行，不用改代码。
-  - **实测验证**：只起了发票服务依赖的最小集合（sky-order-service一个实例+sky-invoice-service两个实例+网关），不需要sky-server（发票接口鉴权是本地JWT校验，不需要跨服务调用；测试用户token复用之前已有的长期有效token）。Nacos里两个实例都注册为健康（`host.docker.internal:8093`/`8193`）。**验证负载均衡确实在工作**：连续打10次`GET /user/invoice/list`，两个容器的日志各自precisely收到5次请求——Spring Cloud LoadBalancer默认轮询策略，不是靠猜的，是日志里数出来的。**验证扩容带来的冗余**：`docker stop`杀掉其中一个实例模拟真实故障，紧接着连续打请求——观察到2次真实的500失败（Nacos的心跳超时配置是15秘，从实例真正下线到LoadBalancer/Nacos完全摘掉这个坏节点之间有个窗口，窗口内轮询到死实例的请求会失败），大约9秒后开始稳定成功，此后连续多次请求全部正常，没有重启网关或存活的那个实例。这个"有几次真实失败"的结果如实记录，没有包装成"无缝切换"——default的Spring Cloud LoadBalancer没有加"这次调用失败自动换一个实例重试"这层保护，真要做到用户完全无感知，需要额外配置LoadBalancer的重试机制（`spring.cloud.loadbalancer.retry.enabled=true`），这次没做，是这条演示顺带发现的一个可以继续深挖的点。之后重启被杀的实例，确认它能重新注册回Nacos、恢复到两个实例的状态。
+  - **实测验证**：只起了发票服务依赖的最小集合（sky-order-service一个实例+sky-invoice-service两个实例+网关），不需要sky-server（发票接口鉴权是本地JWT校验，不需要跨服务调用；测试用户token复用之前已有的长期有效token）。Nacos里两个实例都注册为健康（`host.docker.internal:8093`/`8193`）。**验证负载均衡确实在工作**：连续打10次`GET /user/invoice/list`，两个容器的日志各自precisely收到5次请求——Spring Cloud LoadBalancer默认轮询策略，不是靠猜的，是日志里数出来的。**验证扩容带来的冗余**：`docker stop`杀掉其中一个实例模拟真实故障，紧接着连续打请求——观察到2次真实的500失败（Nacos的心跳超时配置是15秘，从实例真正下线到LoadBalancer/Nacos完全摘掉这个坏节点之间有个窗口，窗口内轮询到死实例的请求会失败），大约9秒后开始稳定成功，此后连续多次请求全部正常，没有重启网关或存活的那个实例。这个"有几次真实失败"的结果如实记录，没有包装成"无缝切换"——default的Spring Cloud LoadBalancer没有加"这次调用失败自动换一个实例重试"这层保护，真要做到用户完全无感知，需要额外配置LoadBalancer的重试机制（`spring.cloud.loadbalancer.retry.enabled=true`），这次没做，是这条演示顺带发现的一个可以继续深挖的点。之后重启被杀的实例，确认它能重新注册回Nacos、恢复到两个实例的状态。**后续追加验证**：又加了第三个实例（换端口8293，其它参数原样复用，不用重新构建镜像），15次请求三个实例精确各分到5次——证明这套"配置里的实例数量"模式不是只对2个实例凑巧管用，加第三个、第四个都是同样的套路，Nacos+LoadBalancer会自动把新实例纳入轮询池。
+- [x] **1实例 vs 3实例并发压测，一个诚实但没有想象中好看的结果**：复用P5那次写的Node并发压测脚本，打`GET /user/invoice/list`（纯本地DB查询，不涉及Feign，排除掉其它变量），同样的并发梯度分别测1个实例和3个实例：
+
+  | 并发数 | 1个实例 QPS | 3个实例 QPS | 差异 |
+  |---|---|---|---|
+  | 20 | 263 | 385 | +46% |
+  | 50 | 573 | 749 | +31% |
+  | 150 | 918 | 930 | +1% |
+  | 300 | 1092 | 983 | **-10%** |
+
+  低并发下扩容确实有实打实的提升（+46%/+31%），但并发一高，3个实例不但没有比1个实例快，反而更慢了（p99延迟从826ms涨到1107ms）。第一次查原因看到`Threads_connected`在3实例压测时是31，跟"3个实例各自默认10连接的HikariCP连接池"精确对得上，当时以为是连接池太小卡住了——**这个假设后来被同一个压测证伪了**：把`maximum-pool-size`从默认10调到30、重新构建镜像重新跑同一组并发梯度，结果不是变好，是全线变差（50并发：749→581；150并发：930→792；300并发：983→953），`Threads_connected`确实涨到了91（连接确实开出来了），但吞吐量没有跟着涨。连接池大小从来不是真正的瓶颈，之前"31刚好等于3×10"只是巧合对上了一个看起来合理但错误的解释，调大池子之后没有更多可用的下游资源可以填，只是让更多连接在同一批有限的CPU/IO上抢，多出来的连接管理开销反而拖慢了整体。已经把这次的`hikari.maximum-pool-size`改动撤回了，不留一个测过没用的"优化"在代码里。
+  更可能的真实情况是**这整套测试环境本身在同一台笔记本上挤了太多东西**：Docker Desktop的WSL2虚拟机、5个Java服务各自的JVM堆、MySQL、6个Redis Sentinel容器、RabbitMQ、Nacos，外加发压测的Node客户端进程本身，全部抢同一批物理CPU核心——高并发下涨不动，更可能是宿主机整体算力见底，不是这个项目架构里哪一层的设计缺陷。
+  - **用`docker stats`实测验证了一下，中间有一次误判、后来自己纠正了**：第一次抓包时机器上同时还跑着另一个完全无关项目的`titan-dev`三节点k3d/kind Kubernetes集群（`titan-dev-control-plane`/`worker`/`worker2`），当时以为CPU紧张是这个集群跟这个项目的容器抢16个逻辑线程（这台机器是AMD Ryzen 7 7435H，8核16线程，`docker info`确认Docker Desktop的VM能用全部16个线程）。后来发现`titan-dev`那几个节点其实当时已经停了，这条解释站不住——**重新控制这个变量、确认`titan-dev`确实是停着的状态下再测一次，同样的CPU飙升和QPS下降依然复现**（网关容器CPU瞬时飙到371%、多个发票实例同时200%+，QPS依然掉到407~420，跟之前记录的420基本一致）。这说明CPU紧张是真实存在的，但**不是因为那个无关的K8s集群**——真正在抢资源的就是这个项目自己这几个容器：网关+3个发票服务实例，高并发下同时多个JVM的GC、Netty/Tomcat线程处理一起飙，瞬时吃掉的CPU比想象中多，16个逻辑线程在这种瞬时多JVM同时爆发的场景下并不算宽裕。
+  - **另外确认了一个独立的、跟CPU紧张无关的发现：`docker stats`监控手段本身会拖累被测系统**——不管有没有`titan-dev`，只要开着`docker stats`（哪怕用开销更低的单次流式模式而不是重复轮询），QPS都会从干净跑出来的953~983掉到407~420，p50延迟从217ms涨到500+ms。查CPU占用这个动作本身在Docker Desktop这套Windows+WSL2的架构下不是免费的，会形成观察者效应。所以最终能确认的是两件事：①CPU紧张是真实的，跟`titan-dev`无关，是这个项目自己的容器在高并发下确实会有瞬时的高CPU爆发；②想要精确测"CPU占用曲线"和"QPS曲线"逐秒对应关系，`docker stats`这个工具本身在这套环境下不够干净，测不出来，需要换一个开销更低的监控方式（比如Windows性能计数器直接采样，不经过Docker Desktop的容器统计聚合层）才能拿到更可信的数据——这条留在这里，没有继续深挖。
+- [x] **其余6个服务的单实例QPS基线**：每个服务各挑一个不需要额外前置数据、不带限流的只读接口，单实例部署下跑同样的四档并发梯度（20/50/150/300），跟发票服务放在同一张图里对比：`sky-order-service`（`/user/shop/list`，208→369 QPS，店铺这次拆分后跟订单一起搬到了这个服务）、AI客服（`/user/ai/conversations`，518→761 QPS）、评价服务（`/user/review/list`，512→601 QPS）、商品服务（`/user/category/list`，585→702 QPS）、订单服务（`/user/order/historyOrders`，180→257 QPS）。差距主要来自接口本身的业务形状不同，不是"哪个服务写得差"：发票/分类/AI会话/评价这几个纯本地单表查询的明显更快；`shop/list`要跨服务Feign调评价服务拿评分聚合，`historyOrders`是30万+行的大表分页查询，两个天然更慢——`historyOrders`在300并发下p50已经涨到1秒，是6个里边最先顶不住的一个，如果以后真要对某个服务做扩容，这个是排在发票服务之后第二个值得关注的候选。可视化整理进了同一份`服务QPS基线`Artifact里。
+
+  **完整数据记录**（QPS + 延迟分位数，ms）：
+
+  发票服务，三种部署形态：
+
+  | 并发 | 部署形态 | QPS | p50 | p90 | p99 |
+  |---|---|---|---|---|---|
+  | 20 | 1个实例 | 263 | 45 | 81 | 141 |
+  | 50 | 1个实例 | 573 | 70 | 120 | 196 |
+  | 150 | 1个实例 | 918 | 127 | 278 | 519 |
+  | 300 | 1个实例 | 1092 | 212 | 409 | 826 |
+  | 20 | 3实例·连接池10 | 385 | 32 | 61 | 164 |
+  | 50 | 3实例·连接池10 | 749 | 51 | 98 | 156 |
+  | 150 | 3实例·连接池10 | 930 | 109 | 268 | 562 |
+  | 300 | 3实例·连接池10 | 983 | 184 | 557 | 1107 |
+  | 20 | 3实例·连接池30（已撤回） | 366 | 42 | 72 | 141 |
+  | 50 | 3实例·连接池30（已撤回） | 581 | 67 | 122 | 203 |
+  | 150 | 3实例·连接池30（已撤回） | 792 | 135 | 297 | 641 |
+  | 300 | 3实例·连接池30（已撤回） | 953 | 217 | 513 | 1200 |
+
+  6个服务，各自单实例：
+
+  | 并发 | sky-order-service<br>shop/list | AI客服<br>conversations | 评价服务<br>review/list | 商品服务<br>category/list | 订单服务<br>historyOrders |
+  |---|---|---|---|---|---|
+  | 20 | 208 qps / p50 75ms | 518 qps / p50 30ms | 512 qps / p50 32ms | 585 qps / p50 28ms | 180 qps / p50 91ms |
+  | 50 | 303 qps / p50 137ms | 757 qps / p50 54ms | 580 qps / p50 71ms | 634 qps / p50 65ms | 240 qps / p50 175ms |
+  | 150 | 347 qps / p50 362ms | 668 qps / p50 182ms | 609 qps / p50 204ms | 762 qps / p50 163ms | 246 qps / p50 511ms |
+  | 300 | 369 qps / p50 657ms | 761 qps / p50 316ms | 601 qps / p50 402ms | 702 qps / p50 347ms | 257 qps / p50 1006ms |
+
+  可交互版本（含p90/p99、悬浮查看每个点）见 [服务QPS基线](https://claude.ai/code/artifact/31ae54f6-3d44-4c41-8e5f-4f5173a17339)。
+
+- [ ] **压测归纳出的四类高并发瓶颈，及各自的解决方案（分析完成，方案未实施）**：7个服务的QPS基线不是同一个瓶颈拖累的，按实测证据能分成四类，性质完全不同，对应的解法也不一样：
+
+  **①跨服务网络调用瓶颈 —— `sky-order-service`（`/user/shop/list`，订单服务这次拆分后店铺跟着搬了过去，不在sky-server了）**。300并发只有369 QPS，不是MySQL慢，是每次请求都要真的发一次Feign调用问评价服务要评分聚合，多了一次网络往返。这类瓶颈加实例救不了自己——这个服务开再多实例，下游review-service还是那一个。**代码里查证了一下，问题比最初想的更精确**：`ShopServiceImpl.listActive()`（查店铺名称/地址/营业类型）本身早就有`@Cacheable(shopListCache)`，注释写着"展示频繁但几乎不改的数据，走缓存"——这部分不是瓶颈。真正没缓存、每次都现查的只有评分聚合（`avgRating`/`reviewCount`），而且是**故意**没缓存：拆评价服务那轮专门验证过"提交评价后立刻查店铺列表，评分马上更新"这个行为，当时当正确性要求测试通过的，给评分套缓存会退回"评价提交了列表半天不更新"的体验倒退，不能简单粗暴地照搬店铺信息那套长缓存策略。**解决方案**：只给评分聚合结果单独加一个很短TTL的Redis缓存（10-30秒级别，不是店铺信息那种小时级TTL），复用项目已有的`RedisCacheManager`机制——多数用户连续刷新时能命中缓存省掉Feign往返，同时新提交的评价最多10-30秒就能体现，在"减少网络往返"和"评分保持新鲜"之间取一个更细的平衡点，而不是简单粗暴地对评分也上长缓存。
+
+  **排查缓存穿透/雪崩/击穿防护时，顺带挖出并修复了一个真实bug**：`shopListCache`的`@Cacheable`/`@CacheEvict`注解本身没错，但整个`sky-order-service`一直没有任何地方加`@EnableCaching`——没有它，Spring根本不会用AOP代理拦截`@Cacheable`方法，注解形同虚设，`RedisConfiguration.java`当时的注释还写着"这个服务不用Spring Cache（没有@Cacheable场景）"，是加`ShopServiceImpl`那次缓存之后没同步更新的过时注释。也就是说上面①这段分析里"店铺信息本身早就有缓存"这个结论，运行时其实从来没生效过，`listActive()`一直在裸调MySQL。已经修复：`OrderServiceApplication`加`@EnableCaching`，`RedisConfiguration`补上`CacheManager`（同sky-server/sky-product-service一样接入`JitteredRedisCacheWriter`防雪崩抖动、`LoggingCacheErrorHandler`做Redis故障兜底）。**修复后现场起服务实测验证过**：本地起`sky-order-service`，用手工签发的JWT连续调两次`/user/shop/list`，第二次响应从冷启动的3.1s降到24ms；`docker exec redis redis-cli -n 1 KEYS "shopListCache*"`在master和两个replica上都能看到`shopListCache::ALL`这个key，`TTL`是3283秒（1小时基准±10%抖动区间内），验证完清掉了这个测试key，服务也停掉恢复到未运行状态。
+
+  同一轮排查还发现`sky-review-service`有一个性质不同但同样真实的缺口：`shopRatingSummaryCache`的`@Cacheable`本身是生效的（`@EnableCaching`确实加在`ReviewServiceApplication`上），但这个服务一直没有自定义`RedisConfiguration`，`CacheManager`完全交给Spring Boot的默认自动配置——默认没有TTL（key永不过期，只靠`submit()`里的`@CacheEvict`手动失效）、默认的`CacheErrorHandler`在Redis读写失败时直接把异常往外抛，跟另外三个服务（sky-server/sky-product-service，以及这次修复后的sky-order-service）已有的"TTL加抖动防雪崩、Redis故障降级不拖垮主流程"防护完全不对等。已经补上同款`RedisConfiguration`（`JitteredRedisCacheWriter`+`LoggingCacheErrorHandler`，1小时TTL兜底，正确性仍然主要靠`@CacheEvict`），重新构建后现场起服务确认没有Bean冲突、正常注册进Nacos。**顺带发现一个不算bug但值得记录的死代码**：这个缓存实际服务的方法`getShopRatingSummary(shopId)`（单店铺版）在整个后端里没有任何controller调用它——`sky-order-service`的`/user/shop/list`用的是批量RPC方法`getShopRatingSummaryBatch`（故意不缓存，见上文①），单店铺版看起来是批量版上线前的旧路径，现在处于"缓存配置修好了，但从未被外部请求触发过"的悬空状态，不影响本次修复的正确性，是否删除留给后续处理。
+
+  **②大表分页查询瓶颈 —— `sky-order-service`（`/user/order/historyOrders`）**。6个里最差，300并发257 QPS，p50已经1秒。`orders`表实测20131行，`PageHelper`分页每次请求要先跑`COUNT(*)`再跑`LIMIT`，两次数据库往返压在最大的一张表上。这是最接近"真实生产会先出问题"的地方——数据只会越堆越多。**方案已经用`EXPLAIN`实测验证过，不是理论推测**：`pageQuery`的SQL是`WHERE user_id = ? ORDER BY order_time DESC`，表上现在只有单列的`idx_orders_user_id`索引，`EXPLAIN`确认`Extra`栏是`Using filesort`——MySQL能用索引过滤出这个用户的307行，但排序这一步没索引可用，得在内存/临时文件里现排。现场加了一个`(user_id, order_time DESC)`联合索引测试，`Using filesort`直接消失（`Extra`栏变空）——**验证完确认方案有效后已经把这个测试索引撤回**，没有把没走迁移脚本流程的表结构改动留在库里，正式实施时要走`database/migration_*.sql`这套约定，不是这次顺手改的。**解决方案**：短期加`(user_id, order_time DESC)`联合索引（已验证有效，改动小见效快）；中期把"查自己的历史订单"这种天然适合无限滚动的场景，从offset分页（`COUNT`+`LIMIT/OFFSET`）换成游标分页（按上一页最后一条的`id`或`order_time`过滤，`WHERE id < ? ORDER BY id DESC LIMIT N`），彻底去掉`COUNT(*)`这个开销，offset分页在"翻到第N页"这种场景才需要、历史订单列表不需要。
+
+  **③分页开销瓶颈（现在数据小看不出来，量大了会重演②）—— `sky-review-service`（`/user/review/list`）**。601 QPS，中等，用的是跟order-service同一套`PageHelper`（COUNT+LIMIT两次往返），只是`review`表现在只有6行，开销被数据量小掩盖了。**同样用`EXPLAIN`核实过，是完全一样的模式**：`pageQuery`是`WHERE shop_id = ? ORDER BY create_time DESC`，`review`表只有单列`idx_review_shop_id`索引，`EXPLAIN`同样确认`Extra`是`Using filesort`——诊断跟②一致，只是现在这个店铺只有4条评价，排序这4条的开销小到测不出差别，不代表模式本身没问题。**解决方案**：跟②同一个思路（`(shop_id, create_time DESC)`联合索引+游标分页），但优先级更低——不是现在就要做，是"评价量真的涨起来之前记得提前做"，属于预防性技术债，不是当前瓶颈。
+
+  **④CPU/宿主机资源争抢瓶颈 —— 影响所有服务，在发票服务和网关上测出来最明显**。已经证实连接池不是真瓶颈（调大反而更差），真正在抢的是这台笔记本有限的CPU——300并发瞬间网关容器CPU飙到347%~371%，多个发票实例同时200%+。这个瓶颈不针对某一个服务的代码逻辑，是"好几个JVM同时在一台机器上突发高负载"这件事本身的物理限制，跟①②③性质完全不同，不是能靠改代码解决的。**回头查了一下，发现这次的容器化工作本身有一个真实的疏漏，会加重这个问题**：7个Dockerfile全部检查过，没有一个设置`-Xmx`/`-Xms`（JVM堆大小不受限，默认按宿主机可用内存的1/4起步，5个JVM服务理论上能各自吃掉一大块）；这次所有`docker run`命令也没有一个带`--cpus`/`--memory`限制。也就是说这些容器现在互相之间没有任何资源边界，高并发瞬间谁都能无限制抢CPU，这本身会放大而不是缓解争抢——这不是"换个环境才能解决"，是当前配置就能改的一部分。**解决方案**：①先把这个真实疏漏补上——每个服务的`java -jar`加`-Xmx`（按服务量级给256MB~512MB量级）、每个`docker run`加`--cpus`/`--memory`限制，让每个JVM的资源claim变得可预期、有边界，这一步不需要换硬件、现在就能做；②真实部署到独立服务器/云主机上（不跟Docker Desktop、IDE、这次意外发现的`titan-dev`这类无关负载共享CPU），大概率能进一步缓解；③如果做完①②之后仍然是CPU瓶颈，再考虑真正的多机横向扩容（K8s跨节点调度，而不是像这次一样把所有容器全挤在一台机器上）。
+
+- [x] **AI客服：历史裁剪/滚动摘要（省token开销）**：`AiChatServiceImpl.chat()`原来每一轮都把会话的全部历史原文重新发一遍给OpenAI，会话越聊越长、每轮请求体和花费跟着线性增长，没有任何裁剪。新增：会话消息数不超过`RECENT_KEEP_MESSAGES`（16条，即8轮）时行为完全不变，直接全量发送；一旦超过，更早的部分不再原文发送，改成折叠进一段滚动摘要（`ai_conversation`表新增`summary`/`summarized_through_message_id`两列，见`database/migration_ai_conversation_summary.sql`），每轮只需要把"新变老"的那一小段（不是全部旧历史）融合进已有摘要，摘要本身的更新是一次独立的、用专门摘要提示词的OpenAI调用，跟主对话调用分开。**摘要更新失败时的处理经过特意设计**：`summarizeOlderMessages`失败返回`null`，调用方据此不推进`summarizedThroughMessageId`——如果这里图省事，失败时直接沿用旧摘要但仍然推进指针，这批消息的内容会跟着指针推进永久丢失（既没进摘要、又被挤出最近窗口，下次也不会再重试）；现在的做法保证下一轮消息数继续增长后，这批内容还会被当作"新变老"重新尝试摘要，不会因为一次OpenAI调用失败就丢内容。**现场做了完整的端到端验证**：新会话第1轮先说"记住我最喜欢的水果是榴莲"，之后连发8轮无关的填充消息把总消息数推到18条（超过16的阈值），确认`ai_conversation.summary`已经写入"用户的最喜欢的水果是榴莲"、`summarized_through_message_id`正确推进；第10轮再问"我在对话最开始说我最喜欢的水果是什么"——这时候第1轮的原始消息已经完全不在"最近16条"的verbatim窗口里，AI依然正确答出"榴莲"，证明摘要机制真的在生效，不是摆设。验证完的测试会话（id=41）和测试进程都按惯例处理——会话数据是正常业务写入，不是需要撤回的schema改动，予以保留；测试进程已停止。
+
+- [x] **缓存穿透/雪崩/击穿专项防护**：结合上面①④的排查，把这三类经典缓存问题在这个项目里逐个核实了一遍现状，不是泛泛而谈。
+  - **穿透**：不用额外做。`dishCache`/`shopListCache`/`shopRatingSummaryCache`这几个缓存的回源方法，查不到数据时返回的都是空list/带默认值的对象而不是null，Spring默认就会把这个"空结果"缓存住（`DishServiceImpl.java`里原有注释已经点出这个行为）；`shopListCache`的key（`businessType`取值1-4）、`dishCache`的key（`categoryId`是全局唯一主键）本身也不是可被任意枚举的开放ID空间。穿透在当前这几个接口上不成立，布隆过滤器这类更重的方案用不上。
+  - **雪崩**：排查时发现两个"防护配置存在但没真正生效"的真bug，都已修复并现场验证：①`sky-order-service`的`ShopServiceImpl`写了`@Cacheable(shopListCache)`，但整个服务没有任何地方加`@EnableCaching`，注解形同虚设，一直在裸调MySQL（`RedisConfiguration.java`里"这个服务不用Spring Cache"的注释是没同步更新的过时说明）；②`sky-review-service`的`shopRatingSummaryCache`倒是真的在缓存，但没有自定义`RedisConfiguration`，`CacheManager`用的是Spring Boot默认配置——没有TTL（永不过期）、Redis读写失败会直接抛异常，跟另外几个服务已有的`JitteredRedisCacheWriter`（TTL加±10%抖动防批量同时过期）+`LoggingCacheErrorHandler`（Redis故障降级成直接查DB，不拖垮主流程）防护不对等。①现场用手工签发的JWT验证过：连续调两次`/user/shop/list`，第二次从冷启动3.1s降到24ms，Redis里能看到`shopListCache::ALL`这个key同步到了master+2个replica，TTL落在1小时±10%区间内；②修复后重新构建、现场起服务确认无Bean冲突、正常注册进Nacos。**注意：①这个修复后来被下面的"击穿"改动整个替换掉了**——`shopListCache`现在不再用`@Cacheable`，`sky-order-service`的`@EnableCaching`/`CacheManager`/`JitteredRedisCacheWriter`已经跟着撤回，避免留下不再生效的配置；②对`sky-review-service`的修复保留有效，那个服务的`shopRatingSummaryCache`没有改用逻辑过期。
+  - **击穿**：这是三个里唯一原本完全没做防护的。新增`com.sky.cache.LogicalExpireCache`（`sky-product-service`和`sky-order-service`里各一份，同一份实现）：Redis里的value自带一个逻辑过期时间戳，key本身不靠Redis TTL过期（只给24小时物理TTL兜底防止无人访问的key永久占内存）；逻辑过期后不阻塞调用方，立刻返回旧数据，同时用`SETNX`（跟`OrderServiceImpl.submit()`幂等锁同款风格）抢一把10秒的互斥锁，抢到的线程去后台异步线程池刷新，抢不到的什么都不做。用来替换`dishCache`（`sky-product-service`，`DishController.list()`/admin端4个写路径）和`shopListCache`（`sky-order-service`，`ShopServiceImpl.listActive()`/`save`/`update`/`startOrStop`）原来的`@Cacheable`/`@CacheEvict`，逻辑TTL都设了60秒。**现场做了完整的并发验证，不是只测了单次读写**：冷启动调用确认Redis里写入的JSON envelope结构正确（`{"logicalExpireAt":...,"data":[...]}`），热读24-27ms；手工把Redis里的`logicalExpireAt`改到过去，模拟"逻辑已过期"状态后，并发发8个请求打同一个key——全部立刻返回（没有一个卡在等DB），`lock:cache-refresh:shopListCache::ALL`这把锁确认只被抢到过一次（`GET`到值、`TTL`剩8秒），几秒后再查这个key，`logicalExpireAt`确实已经被后台线程刷新到了未来时间点——"少数几个热key、高并发、后台只刷新一次、前台谁都不用等"这个核心行为链路完整跑通并验证过。验证完清理了所有测试key和测试进程。
 
 ## 已实现但此前未做过完整回归的产品功能（本轮补测）
 

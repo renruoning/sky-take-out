@@ -1,5 +1,5 @@
 -- sky-order-service独立数据库，从sky_take_out拆分出来（P4第五步）：orders/order_detail/shop三张表。
--- shop这次跟订单一起搬，不是单独的一步——见TODO.md的说明，shop表本身没有其它服务/领域直接依赖，
+-- shop这次跟订单一起搬，不是单独的一步——见REPORT.md的说明，shop表本身没有其它服务/领域直接依赖，
 -- 只有跟order-service自己内部（InternalOrderController拼shopName）和员工鉴权（shop_id JWT claim，
 -- 跟表在哪个物理库无关）有关系。
 

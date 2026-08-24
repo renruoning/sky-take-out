@@ -79,7 +79,7 @@ INSERT INTO `employee` VALUES (8,4,'花语鲜花老板','boss4','e10adc3949ba59a
 -- database/migration_split_invoice_service_db.sql），新库里多了order_number/order_time/shop_name
 -- 三个快照字段，替代了原来对orders/shop表的JOIN。
 
--- 购物车已经迁移到Redis（见 TODO.md P1，ShoppingCartServiceImpl 用 Redis Hash 存储），
+-- 购物车已经迁移到Redis（见 REPORT.md P1，ShoppingCartServiceImpl 用 Redis Hash 存储），
 -- 不再需要 shopping_cart 这张MySQL表，新装库不会创建它。
 
 DROP TABLE IF EXISTS `user`;

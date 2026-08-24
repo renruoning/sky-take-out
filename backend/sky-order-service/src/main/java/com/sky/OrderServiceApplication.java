@@ -10,7 +10,9 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 // @EnableFeignClients给RatingClient用（user/ShopController.list()调sky-review-service要评分汇总）；
 // @EnableScheduling给OrderTask（凌晨强制完成超时配送订单）用；@EnableTransactionManagement给
-// OrderServiceImpl.submit()的@Transactional用——原样从sky-server的SkyApplication搬过来
+// OrderServiceImpl.submit()的@Transactional用——原样从sky-server的SkyApplication搬过来。
+// 不需要@EnableCaching：shopListCache现在用的是com.sky.cache.LogicalExpireCache（逻辑过期+互斥锁
+// 异步刷新），不是Spring Cache的@Cacheable（见ShopServiceImpl/RedisConfiguration里的说明）
 @SpringBootApplication
 @EnableDiscoveryClient
 @EnableFeignClients

@@ -43,4 +43,13 @@ public interface AiConversationMapper {
      */
     @Update("update ai_conversation set update_time = #{updateTime} where id = #{id}")
     void updateTime(AiConversation aiConversation);
+
+    /**
+     * 更新滚动摘要，供历史裁剪机制用（见AiChatServiceImpl里的说明）
+     * @param id
+     * @param summary
+     * @param summarizedThroughMessageId
+     */
+    @Update("update ai_conversation set summary = #{summary}, summarized_through_message_id = #{summarizedThroughMessageId} where id = #{id}")
+    void updateSummary(Long id, String summary, Long summarizedThroughMessageId);
 }

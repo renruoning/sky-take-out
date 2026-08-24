@@ -8,6 +8,8 @@ CREATE TABLE `ai_conversation` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `user_id` bigint NOT NULL,
   `title` varchar(50) DEFAULT NULL COMMENT '会话标题，取自第一条用户消息的前若干字',
+  `summary` text DEFAULT NULL COMMENT '更早历史的滚动摘要，为空表示还没长到需要裁剪（见migration_ai_conversation_summary.sql）',
+  `summarized_through_message_id` bigint DEFAULT NULL COMMENT 'summary已经融合到了哪一条ai_message为止',
   `create_time` datetime DEFAULT NULL,
   `update_time` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),

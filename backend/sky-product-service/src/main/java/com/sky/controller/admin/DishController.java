@@ -2,7 +2,6 @@ package com.sky.controller.admin;
 
 import java.util.List;
 
-import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -12,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.sky.cache.LogicalExpireCache;
 import com.sky.dto.DishDTO;
 import com.sky.dto.DishPageQueryDTO;
 import com.sky.entity.Dish;
@@ -30,9 +30,11 @@ import lombok.extern.slf4j.Slf4j;
 public class DishController {
 
     private final DishService dishService;
+    private final LogicalExpireCache logicalExpireCache;
 
-    DishController(DishService dishService) {
+    DishController(DishService dishService, LogicalExpireCache logicalExpireCache) {
         this.dishService = dishService;
+        this.logicalExpireCache = logicalExpireCache;
     }
 
     /**
@@ -42,10 +44,10 @@ public class DishController {
      * @return 操作结果
      */
     @PostMapping
-    @CacheEvict(cacheNames = "dishCache", key = "#dishDTO.categoryId")
     public Result save(@RequestBody DishDTO dishDTO) {
         log.info("新增菜品: {}", dishDTO);
         dishService.saveWithFlavor(dishDTO);
+        logicalExpireCache.evict(com.sky.controller.user.DishController.DISH_CACHE_PREFIX + dishDTO.getCategoryId());
         return Result.success();
     }
 
@@ -56,10 +58,10 @@ public class DishController {
      * @return 操作结果
      */
     @DeleteMapping
-    @CacheEvict(cacheNames = "dishCache", allEntries = true)
     public Result delete(@RequestParam List<Long> ids) {
         log.info("批量删除菜品: {}", ids);
         dishService.deleteBatch(ids);
+        logicalExpireCache.evictByPrefix(com.sky.controller.user.DishController.DISH_CACHE_PREFIX);
         return Result.success();
     }
 
@@ -79,10 +81,10 @@ public class DishController {
 
     // 修改可能连分类都改了，无法确定只影响哪一个分类的缓存，直接清空所有菜品缓存
     @PutMapping
-    @CacheEvict(cacheNames = "dishCache", allEntries = true)
     public Result update(@RequestBody DishDTO dishDTO) {
         log.info("修改菜品: {}", dishDTO);
         dishService.updateWithFlavor(dishDTO);
+        logicalExpireCache.evictByPrefix(com.sky.controller.user.DishController.DISH_CACHE_PREFIX);
         return Result.success();
     }
 
@@ -105,10 +107,10 @@ public class DishController {
      */
     // 停售还可能联动停售关联的套餐，影响范围不确定，直接清空所有菜品缓存
     @PostMapping("/status/{status}")
-    @CacheEvict(cacheNames = "dishCache", allEntries = true)
     public Result startOrStop(@PathVariable("status") Integer status, Long id) {
         log.info("起售停售菜品: status={}, id={}", status, id);
         dishService.startOrStop(status, id);
+        logicalExpireCache.evictByPrefix(com.sky.controller.user.DishController.DISH_CACHE_PREFIX);
         return Result.success();
     }
 }

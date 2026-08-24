@@ -2,6 +2,7 @@ package com.sky.service.impl;
 
 import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
+import com.sky.cache.LogicalExpireCache;
 import com.sky.constant.MessageConstant;
 import com.sky.context.BaseContext;
 import com.sky.dto.ShopDTO;
@@ -11,11 +12,11 @@ import com.sky.exception.ShopBusinessException;
 import com.sky.mapper.ShopMapper;
 import com.sky.result.PageResult;
 import com.sky.service.ShopService;
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.springframework.beans.BeanUtils;
-import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -27,10 +28,17 @@ import java.util.Objects;
 @Service
 public class ShopServiceImpl implements ShopService {
 
-    private final ShopMapper shopMapper;
+    // 首页级高并发热点接口，用逻辑过期缓存防止某个businessType（key取值域只有1-4这几个）的key
+    // 过期瞬间被并发穿透到DB（见LogicalExpireCache类注释）
+    public static final String SHOP_CACHE_PREFIX = "shopListCache::";
+    private static final Duration SHOP_CACHE_LOGICAL_TTL = Duration.ofSeconds(60);
 
-    ShopServiceImpl(ShopMapper shopMapper) {
+    private final ShopMapper shopMapper;
+    private final LogicalExpireCache logicalExpireCache;
+
+    ShopServiceImpl(ShopMapper shopMapper, LogicalExpireCache logicalExpireCache) {
         this.shopMapper = shopMapper;
+        this.logicalExpireCache = logicalExpireCache;
     }
 
     /**
@@ -42,7 +50,6 @@ public class ShopServiceImpl implements ShopService {
         }
     }
 
-    @CacheEvict(cacheNames = "shopListCache", allEntries = true)
     public void save(ShopDTO shopDTO) {
         checkPlatformAdmin();
         if (shopDTO.getBusinessType() == null) {
@@ -57,6 +64,7 @@ public class ShopServiceImpl implements ShopService {
         // 会导致店铺刚建好、还没真正“改过”一次营业类型，就已经被一年冷却卡住第一次修改——
         // 冷却应该从第一次真实修改开始算，不是从建店开始算。
         shopMapper.insert(shop);
+        logicalExpireCache.evictByPrefix(SHOP_CACHE_PREFIX);
     }
 
     public PageResult pageQuery(ShopPageQueryDTO shopPageQueryDTO) {
@@ -67,7 +75,6 @@ public class ShopServiceImpl implements ShopService {
     }
 
     // 店铺信息（含businessType，会影响用户端按分类过滤后的列表结果）改动很少，一律清空整个shopListCache而不是精算受影响的key
-    @CacheEvict(cacheNames = "shopListCache", allEntries = true)
     public void update(ShopDTO shopDTO) {
         checkPlatformAdmin();
         Shop shop = new Shop();
@@ -93,6 +100,7 @@ public class ShopServiceImpl implements ShopService {
         }
 
         shopMapper.update(shop);
+        logicalExpireCache.evictByPrefix(SHOP_CACHE_PREFIX);
     }
 
     /**
@@ -104,7 +112,6 @@ public class ShopServiceImpl implements ShopService {
         }
     }
 
-    @CacheEvict(cacheNames = "shopListCache", allEntries = true)
     public void startOrStop(Integer status, Long id) {
         checkPlatformAdmin();
         Shop shop = Shop.builder()
@@ -112,13 +119,16 @@ public class ShopServiceImpl implements ShopService {
                 .status(status)
                 .build();
         shopMapper.update(shop);
+        logicalExpireCache.evictByPrefix(SHOP_CACHE_PREFIX);
     }
 
     /**
-     * 展示频繁但几乎不改的数据（店铺名称/地址/营业类型），走缓存
+     * 展示频繁但几乎不改的数据（店铺名称/地址/营业类型），用逻辑过期缓存防击穿（见LogicalExpireCache类注释）
      */
-    @Cacheable(cacheNames = "shopListCache", key = "#businessType != null ? #businessType : 'ALL'")
     public List<Shop> listActive(Integer businessType) {
-        return shopMapper.listActive(businessType);
+        String cacheKey = SHOP_CACHE_PREFIX + (businessType != null ? businessType : "ALL");
+        return logicalExpireCache.get(cacheKey, SHOP_CACHE_LOGICAL_TTL,
+                new TypeReference<List<Shop>>() {
+                }, () -> shopMapper.listActive(businessType));
     }
 }
