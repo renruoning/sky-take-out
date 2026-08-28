@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import com.github.pagehelper.Page;
 import com.sky.annotation.AutoFill;
@@ -97,4 +98,22 @@ public interface DishMapper {
      * @return
      */
     Integer countByMap(Map map);
+
+    /**
+     * 原子扣减库存：库存不够（或id不存在）时WHERE条件不成立，影响行数为0，
+     * 不会出现扣成负数——不用先SELECT再UPDATE两步判断，避免并发场景下的竞态
+     * @param id 菜品id
+     * @param number 扣减数量
+     * @return 影响行数，0表示库存不足或菜品不存在
+     */
+    @Update("update dish set stock = stock - #{number} where id = #{id} and stock >= #{number}")
+    int deductStock(@Param("id") Long id, @Param("number") Integer number);
+
+    /**
+     * 恢复库存（订单取消时的补偿操作），不需要条件判断，直接加回去
+     * @param id 菜品id
+     * @param number 恢复数量
+     */
+    @Update("update dish set stock = stock + #{number} where id = #{id}")
+    void restoreStock(@Param("id") Long id, @Param("number") Integer number);
 }

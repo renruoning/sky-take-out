@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import com.github.pagehelper.Page;
 import com.sky.annotation.AutoFill;
@@ -87,4 +88,21 @@ public interface SetmealMapper {
      * @return
      */
     Integer countByMap(Map map);
+
+    /**
+     * 原子扣减库存，见DishMapper.deductStock同款逻辑
+     * @param id 套餐id
+     * @param number 扣减数量
+     * @return 影响行数，0表示库存不足或套餐不存在
+     */
+    @Update("update setmeal set stock = stock - #{number} where id = #{id} and stock >= #{number}")
+    int deductStock(@Param("id") Long id, @Param("number") Integer number);
+
+    /**
+     * 恢复库存（订单取消时的补偿操作）
+     * @param id 套餐id
+     * @param number 恢复数量
+     */
+    @Update("update setmeal set stock = stock + #{number} where id = #{id}")
+    void restoreStock(@Param("id") Long id, @Param("number") Integer number);
 }

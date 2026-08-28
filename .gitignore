@@ -5,4 +5,5 @@
 *Test.java
 **/test/
 backend/sky-server/src/main/resources/application-dev.yml
+backend/sky-server/src/main/resources/application-docker.yml
 frontend/logs/

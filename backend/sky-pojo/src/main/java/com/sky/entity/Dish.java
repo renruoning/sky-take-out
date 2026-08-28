@@ -45,6 +45,9 @@ public class Dish implements Serializable {
     //是否处方药 0否 1是（仅医药类目店铺的商品会用到，其他业务线忽略即可）
     private Integer needPrescription;
 
+    //库存数量
+    private Integer stock;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

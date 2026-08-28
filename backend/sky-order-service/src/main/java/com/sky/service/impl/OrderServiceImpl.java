@@ -10,7 +10,9 @@ import com.sky.dto.OrdersPageQueryDTO;
 import com.sky.dto.OrdersPaymentDTO;
 import com.sky.dto.OrdersRejectionDTO;
 import com.sky.dto.OrdersSubmitDTO;
+import com.sky.client.ProductClient;
 import com.sky.client.SkyServerClient;
+import com.sky.dto.StockChangeItemDTO;
 import com.sky.entity.AddressBook;
 import com.sky.entity.OrderDetail;
 import com.sky.entity.Orders;
@@ -46,10 +48,12 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -59,6 +63,7 @@ public class OrderServiceImpl implements OrderService {
     private final OrderMapper orderMapper;
     private final OrderDetailMapper orderDetailMapper;
     private final SkyServerClient skyServerClient;
+    private final ProductClient productClient;
     private final WeChatPayUtil weChatPayUtil;
     private final RabbitTemplate rabbitTemplate;
     private final RedisTemplate<String, Object> redisTemplate;
@@ -78,15 +83,57 @@ public class OrderServiceImpl implements OrderService {
     private static final long CANCEL_LOCK_WAIT_SECONDS = 2;
 
     OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, SkyServerClient skyServerClient,
-                      WeChatPayUtil weChatPayUtil, RabbitTemplate rabbitTemplate, RedisTemplate<String, Object> redisTemplate,
-                      RedissonClient redissonClient) {
+                      ProductClient productClient, WeChatPayUtil weChatPayUtil, RabbitTemplate rabbitTemplate,
+                      RedisTemplate<String, Object> redisTemplate, RedissonClient redissonClient) {
         this.orderMapper = orderMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.skyServerClient = skyServerClient;
+        this.productClient = productClient;
         this.weChatPayUtil = weChatPayUtil;
         this.rabbitTemplate = rabbitTemplate;
         this.redisTemplate = redisTemplate;
         this.redissonClient = redissonClient;
+    }
+
+    /**
+     * 把购物车/订单明细里的条目按dishId或setmealId合并数量——同一个菜品不同口味在购物车里是
+     * 多行，但库存是按菜品维度记的，扣库存要按菜品合并后的总数量扣，不能按购物车行数逐行扣
+     */
+    private static <T> List<StockChangeItemDTO> mergeStockItems(List<T> source,
+            Function<T, Long> dishIdGetter, Function<T, Long> setmealIdGetter, Function<T, Integer> numberGetter) {
+        Map<String, StockChangeItemDTO> merged = new LinkedHashMap<>();
+        for (T row : source) {
+            Long dishId = dishIdGetter.apply(row);
+            Long setmealId = setmealIdGetter.apply(row);
+            String key = dishId != null ? "D" + dishId : "S" + setmealId;
+            StockChangeItemDTO item = merged.get(key);
+            if (item == null) {
+                merged.put(key, StockChangeItemDTO.builder()
+                        .dishId(dishId).setmealId(setmealId).number(numberGetter.apply(row)).build());
+            } else {
+                item.setNumber(item.getNumber() + numberGetter.apply(row));
+            }
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * 订单取消时的库存补偿：查这笔订单实际买了什么，加回对应的库存。fail-open——恢复失败只记日志，
+     * 不能因为一个补偿动作失败就连"取消订单"这个主操作本身都做不成；代价是这种情况下会残留一个
+     * 库存和实际订单状态不一致的窗口，需要人工/对账兜底，这是手写补偿事务（而不是Seata这类真正的
+     * 分布式事务框架）天然留下的缺口
+     */
+    private void restoreStockForOrder(Long orderId) {
+        try {
+            List<OrderDetail> details = orderDetailMapper.getByOrderId(orderId);
+            List<StockChangeItemDTO> items = mergeStockItems(details,
+                    OrderDetail::getDishId, OrderDetail::getSetmealId, OrderDetail::getNumber);
+            if (!items.isEmpty()) {
+                productClient.restoreStock(items);
+            }
+        } catch (Exception e) {
+            log.error("订单{}取消后恢复库存失败（商品服务不可达/异常），库存和订单状态出现不一致，需要人工核对！", orderId, e);
+        }
     }
 
     /**
@@ -165,54 +212,88 @@ public class OrderServiceImpl implements OrderService {
                 throw new ShoppingCartBusinessException(MessageConstant.SHOPPING_CART_IS_NULL);
             }
 
-            User user = unwrap(skyServerClient.getUser(userId));
-
-            // 插入订单：店铺id取自购物车（购物车已保证单一店铺，不信任客户端传入的店铺id）
-            Orders orders = new Orders();
-            BeanUtils.copyProperties(ordersSubmitDTO, orders);
-            orders.setNumber(String.valueOf(System.currentTimeMillis()));
-            orders.setStatus(Orders.PENDING_PAYMENT);
-            orders.setUserId(userId);
-            orders.setShopId(shoppingCartList.get(0).getShopId());
-            orders.setOrderTime(LocalDateTime.now());
-            orders.setPayStatus(Orders.UN_PAID);
-            orders.setPhone(addressBook.getPhone());
-            orders.setConsignee(addressBook.getConsignee());
-            orders.setUserName(user.getName());
-            orders.setUserAvatar(user.getAvatar());
-            orders.setAddress(addressBook.getProvinceName() + addressBook.getCityName()
-                    + addressBook.getDistrictName() + addressBook.getDetail());
-
-            orderMapper.insert(orders);
-
-            // 插入订单明细
-            List<OrderDetail> orderDetailList = new ArrayList<>();
-            for (ShoppingCart cart : shoppingCartList) {
-                OrderDetail orderDetail = new OrderDetail();
-                BeanUtils.copyProperties(cart, orderDetail);
-                orderDetail.setOrderId(orders.getId());
-                orderDetailList.add(orderDetail);
-            }
-            orderDetailMapper.insertBatch(orderDetailList);
-
-            // 清空购物车
-            skyServerClient.cleanCart(userId);
-
-            // 发送延迟消息，若30分钟后订单仍未支付则自动取消。
-            // RabbitMQ不可达不该导致下单直接失败——那样"能不能点餐"就被一个订单超时兜底机制卡住了，
-            // 代价是这一笔订单万一真没付款也不会被自动取消，需要靠人工/对账兜底，两害相权取其轻。
+            // 扣减库存：这个项目里唯一一处"一次业务操作要跨两个服务各自的数据库做写操作"的地方——
+            // 库存扣在product-service的库，订单建在order-service自己的库，两边没法用同一个本地事务
+            // 盖住。先扣库存（product-service内部用它自己的本地事务保证这一批条目要么全扣成功要么
+            // 全不扣，见StockServiceImpl.deductStock），扣成功之后再建订单；下面建订单这一段一旦
+            // 失败，在catch里手动调用restoreStock把库存加回去——这是手写的补偿事务（saga风格），
+            // 不是Seata那种真正的分布式事务框架，如果"建单失败"和"补偿恢复库存"两步都失败（比如
+            // 商品服务在恢复库存那一刻恰好也不可达），会留下库存被扣但订单没建成的不一致，这个残余
+            // 风险窗口正是Seata/TCC这类工具存在的意义，这次没有引入那一整套机制。
+            List<StockChangeItemDTO> stockItems = mergeStockItems(shoppingCartList,
+                    ShoppingCart::getDishId, ShoppingCart::getSetmealId, ShoppingCart::getNumber);
+            Result<String> deductResult;
             try {
-                rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_EXCHANGE, RabbitMQConfig.ORDER_TIMEOUT_DELAY_ROUTING_KEY, orders.getId());
+                deductResult = productClient.deductStock(stockItems);
             } catch (Exception e) {
-                log.error("订单{}的超时取消延迟消息发送失败（RabbitMQ不可达），订单已正常创建，但不会被自动取消，需要人工关注", orders.getId(), e);
+                log.error("扣减库存的Feign调用失败（商品服务不可达），本次下单直接失败，不建立订单", e);
+                throw new OrderBusinessException(MessageConstant.STOCK_SERVICE_UNAVAILABLE);
+            }
+            if (deductResult == null || deductResult.getCode() == null || deductResult.getCode() != 1) {
+                String msg = (deductResult != null && deductResult.getMsg() != null)
+                        ? deductResult.getMsg() : MessageConstant.STOCK_NOT_ENOUGH;
+                throw new OrderBusinessException(msg);
             }
 
-            return OrderSubmitVO.builder()
-                    .id(orders.getId())
-                    .orderNumber(orders.getNumber())
-                    .orderAmount(orders.getAmount())
-                    .orderTime(orders.getOrderTime())
-                    .build();
+            try {
+                User user = unwrap(skyServerClient.getUser(userId));
+
+                // 插入订单：店铺id取自购物车（购物车已保证单一店铺，不信任客户端传入的店铺id）
+                Orders orders = new Orders();
+                BeanUtils.copyProperties(ordersSubmitDTO, orders);
+                orders.setNumber(String.valueOf(System.currentTimeMillis()));
+                orders.setStatus(Orders.PENDING_PAYMENT);
+                orders.setUserId(userId);
+                orders.setShopId(shoppingCartList.get(0).getShopId());
+                orders.setOrderTime(LocalDateTime.now());
+                orders.setPayStatus(Orders.UN_PAID);
+                orders.setPhone(addressBook.getPhone());
+                orders.setConsignee(addressBook.getConsignee());
+                orders.setUserName(user.getName());
+                orders.setUserAvatar(user.getAvatar());
+                orders.setAddress(addressBook.getProvinceName() + addressBook.getCityName()
+                        + addressBook.getDistrictName() + addressBook.getDetail());
+
+                orderMapper.insert(orders);
+
+                // 插入订单明细
+                List<OrderDetail> orderDetailList = new ArrayList<>();
+                for (ShoppingCart cart : shoppingCartList) {
+                    OrderDetail orderDetail = new OrderDetail();
+                    BeanUtils.copyProperties(cart, orderDetail);
+                    orderDetail.setOrderId(orders.getId());
+                    orderDetailList.add(orderDetail);
+                }
+                orderDetailMapper.insertBatch(orderDetailList);
+
+                // 清空购物车
+                skyServerClient.cleanCart(userId);
+
+                // 发送延迟消息，若30分钟后订单仍未支付则自动取消。
+                // RabbitMQ不可达不该导致下单直接失败——那样"能不能点餐"就被一个订单超时兜底机制卡住了，
+                // 代价是这一笔订单万一真没付款也不会被自动取消，需要靠人工/对账兜底，两害相权取其轻。
+                try {
+                    rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_EXCHANGE, RabbitMQConfig.ORDER_TIMEOUT_DELAY_ROUTING_KEY, orders.getId());
+                } catch (Exception e) {
+                    log.error("订单{}的超时取消延迟消息发送失败（RabbitMQ不可达），订单已正常创建，但不会被自动取消，需要人工关注", orders.getId(), e);
+                }
+
+                return OrderSubmitVO.builder()
+                        .id(orders.getId())
+                        .orderNumber(orders.getNumber())
+                        .orderAmount(orders.getAmount())
+                        .orderTime(orders.getOrderTime())
+                        .build();
+            } catch (RuntimeException e) {
+                log.error("库存已扣减但订单创建失败，回滚库存，stockItems={}", stockItems, e);
+                try {
+                    productClient.restoreStock(stockItems);
+                } catch (Exception restoreEx) {
+                    log.error("订单创建失败后回滚库存也失败（商品服务不可达/异常），出现库存扣减与订单未创建的不一致，" +
+                            "stockItems={}，需要人工介入核对！", stockItems, restoreEx);
+                }
+                throw e;
+            }
         } finally {
             if (lockAcquired) {
                 try {
@@ -405,6 +486,9 @@ public class OrderServiceImpl implements OrderService {
             orders.setCancelReason("用户取消");
             orders.setCancelTime(LocalDateTime.now());
             orderMapper.update(orders);
+
+            // 下单时扣了库存，取消了就要加回去
+            restoreStockForOrder(id);
         });
     }
 
@@ -543,35 +627,41 @@ public class OrderServiceImpl implements OrderService {
      * @param ordersRejectionDTO
      */
     public void rejection(OrdersRejectionDTO ordersRejectionDTO) throws Exception {
-        // 根据id查询订单
+        // 校验订单归属当前店铺，防止跨店操作，不涉及订单状态的读-判断-写，不用放进锁里
         Orders ordersDB = orderMapper.getById(ordersRejectionDTO.getId());
-
-        // 校验订单归属当前店铺，防止跨店操作
         Long shopId = BaseContext.getCurrentShopId();
         if (ordersDB == null || shopId == null || !shopId.equals(ordersDB.getShopId())) {
             throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
         }
 
-        // 订单只有存在且状态为2（待接单）才可以拒单
-        if (!ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
-            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
-        }
+        // 拒单跟用户取消/管理端取消/超时自动取消是同一组会互相竞争同一个订单的"取消"路径，之前这里
+        // 没有加锁——引入库存恢复之后，拒单和管理端取消撞在同一个订单上会导致库存被恢复两次，
+        // 所以这次一并补上锁
+        runWithCancelLock(ordersRejectionDTO.getId(), () -> {
+            Orders latest = orderMapper.getById(ordersRejectionDTO.getId());
 
-        //支付状态
-        Integer payStatus = ordersDB.getPayStatus();
-        if (payStatus.equals(Orders.PAID)) {
-            // 暂无微信支付商户资质，无法调用真实的微信退款接口，跳过并只记录日志
-            log.info("订单{}已支付，拒单需要退款（未接入真实微信支付，跳过实际退款调用）", ordersDB.getNumber());
-        }
+            // 订单只有存在且状态为2（待接单）才可以拒单
+            if (latest == null || !latest.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
+                throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+            }
 
-        // 拒单需要退款，根据订单id更新订单状态、拒单原因、取消时间
-        Orders orders = new Orders();
-        orders.setId(ordersDB.getId());
-        orders.setStatus(Orders.CANCELLED);
-        orders.setRejectionReason(ordersRejectionDTO.getRejectionReason());
-        orders.setCancelTime(LocalDateTime.now());
+            //支付状态
+            if (Orders.PAID.equals(latest.getPayStatus())) {
+                // 暂无微信支付商户资质，无法调用真实的微信退款接口，跳过并只记录日志
+                log.info("订单{}已支付，拒单需要退款（未接入真实微信支付，跳过实际退款调用）", latest.getNumber());
+            }
 
-        orderMapper.update(orders);
+            // 拒单需要退款，根据订单id更新订单状态、拒单原因、取消时间
+            Orders orders = new Orders();
+            orders.setId(latest.getId());
+            orders.setStatus(Orders.CANCELLED);
+            orders.setRejectionReason(ordersRejectionDTO.getRejectionReason());
+            orders.setCancelTime(LocalDateTime.now());
+            orderMapper.update(orders);
+
+            // 下单时扣了库存，拒单了就要加回去
+            restoreStockForOrder(latest.getId());
+        });
     }
 
     /**
@@ -584,6 +674,12 @@ public class OrderServiceImpl implements OrderService {
 
         runWithCancelLock(ordersCancelDTO.getId(), () -> {
             Orders ordersDB = orderMapper.getById(ordersCancelDTO.getId());
+
+            // 已经是取消状态就不再重复处理——不加这个判断的话，管理端对同一笔订单连续点两次"取消"
+            // 会把已经恢复过的库存再恢复一次，凭空多出库存来，是引入库存恢复之后才需要补的判断
+            if (ordersDB == null || Orders.CANCELLED.equals(ordersDB.getStatus())) {
+                return;
+            }
 
             //支付状态
             Integer payStatus = ordersDB.getPayStatus();
@@ -599,6 +695,9 @@ public class OrderServiceImpl implements OrderService {
             orders.setCancelReason(ordersCancelDTO.getCancelReason());
             orders.setCancelTime(LocalDateTime.now());
             orderMapper.update(orders);
+
+            // 下单时扣了库存，取消了就要加回去
+            restoreStockForOrder(ordersCancelDTO.getId());
         });
     }
 

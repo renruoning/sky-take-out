@@ -49,5 +49,7 @@ public class MessageConstant {
     public static final String ORDER_PROCESSING_CONFLICT = "订单正在处理中，请稍后重试";
     public static final String AI_CHAT_RATE_LIMITED = "消息发送过于频繁，请稍后再试";
     public static final String WEBSOCKET_AUTH_FAILED = "WebSocket连接鉴权失败";
+    public static final String STOCK_NOT_ENOUGH = "库存不足";
+    public static final String STOCK_SERVICE_UNAVAILABLE = "库存服务暂时不可用，请稍后再试";
 
 }

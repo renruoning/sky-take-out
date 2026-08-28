@@ -1,20 +1,25 @@
 package com.sky.controller.internal;
 
 import com.sky.constant.StatusConstant;
+import com.sky.dto.StockChangeItemDTO;
 import com.sky.entity.Dish;
 import com.sky.entity.Setmeal;
 import com.sky.mapper.DishMapper;
 import com.sky.mapper.SetmealMapper;
 import com.sky.result.Result;
+import com.sky.service.StockService;
 import com.sky.vo.DishOverViewVO;
 import com.sky.vo.SetmealOverViewVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -27,10 +32,12 @@ public class InternalProductController {
 
     private final DishMapper dishMapper;
     private final SetmealMapper setmealMapper;
+    private final StockService stockService;
 
-    InternalProductController(DishMapper dishMapper, SetmealMapper setmealMapper) {
+    InternalProductController(DishMapper dishMapper, SetmealMapper setmealMapper, StockService stockService) {
         this.dishMapper = dishMapper;
         this.setmealMapper = setmealMapper;
+        this.stockService = stockService;
     }
 
     /**
@@ -74,5 +81,24 @@ public class InternalProductController {
         Integer discontinued = setmealMapper.countByMap(map);
 
         return Result.success(SetmealOverViewVO.builder().sold(sold).discontinued(discontinued).build());
+    }
+
+    /**
+     * 供order-service下单时扣减库存：库存不够会抛StockBusinessException，被GlobalExceptionHandler
+     * 转成Result.error(msg)返回（HTTP 200），不是Feign异常——调用方靠code!=1判断失败，见OrderServiceImpl.submit()
+     */
+    @PostMapping("/internal/stock/deduct")
+    public Result<String> deductStock(@RequestBody List<StockChangeItemDTO> items) {
+        stockService.deductStock(items);
+        return Result.success();
+    }
+
+    /**
+     * 供order-service订单取消时恢复库存（补偿操作）
+     */
+    @PostMapping("/internal/stock/restore")
+    public Result<String> restoreStock(@RequestBody List<StockChangeItemDTO> items) {
+        stockService.restoreStock(items);
+        return Result.success();
     }
 }

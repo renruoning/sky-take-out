@@ -1,7 +1,11 @@
 package com.sky.mq;
 
+import com.sky.client.ProductClient;
 import com.sky.config.RabbitMQConfig;
+import com.sky.dto.StockChangeItemDTO;
+import com.sky.entity.OrderDetail;
 import com.sky.entity.Orders;
+import com.sky.mapper.OrderDetailMapper;
 import com.sky.mapper.OrderMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -10,6 +14,10 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -26,10 +34,15 @@ public class OrderTimeoutListener {
     private static final long CANCEL_LOCK_WAIT_SECONDS = 2;
 
     private final OrderMapper orderMapper;
+    private final OrderDetailMapper orderDetailMapper;
+    private final ProductClient productClient;
     private final RedissonClient redissonClient;
 
-    OrderTimeoutListener(OrderMapper orderMapper, RedissonClient redissonClient) {
+    OrderTimeoutListener(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, ProductClient productClient,
+                          RedissonClient redissonClient) {
         this.orderMapper = orderMapper;
+        this.orderDetailMapper = orderDetailMapper;
+        this.productClient = productClient;
         this.redissonClient = redissonClient;
     }
 
@@ -72,6 +85,31 @@ public class OrderTimeoutListener {
             orders.setCancelReason("支付超时，自动取消");
             orders.setCancelTime(LocalDateTime.now());
             orderMapper.update(orders);
+
+            // 下单时扣了库存，超时自动取消了也要加回去，跟OrderServiceImpl.userCancelById/cancel同款逻辑
+            restoreStock(orderId);
+        }
+    }
+
+    private void restoreStock(Long orderId) {
+        try {
+            List<OrderDetail> details = orderDetailMapper.getByOrderId(orderId);
+            Map<String, StockChangeItemDTO> merged = new LinkedHashMap<>();
+            for (OrderDetail d : details) {
+                String key = d.getDishId() != null ? "D" + d.getDishId() : "S" + d.getSetmealId();
+                StockChangeItemDTO item = merged.get(key);
+                if (item == null) {
+                    merged.put(key, StockChangeItemDTO.builder()
+                            .dishId(d.getDishId()).setmealId(d.getSetmealId()).number(d.getNumber()).build());
+                } else {
+                    item.setNumber(item.getNumber() + d.getNumber());
+                }
+            }
+            if (!merged.isEmpty()) {
+                productClient.restoreStock(new ArrayList<>(merged.values()));
+            }
+        } catch (Exception e) {
+            log.error("订单{}超时自动取消后恢复库存失败（商品服务不可达/异常），库存和订单状态出现不一致，需要人工核对！", orderId, e);
         }
     }
 }
