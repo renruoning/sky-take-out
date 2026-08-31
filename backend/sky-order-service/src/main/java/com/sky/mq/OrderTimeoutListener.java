@@ -46,7 +46,8 @@ public class OrderTimeoutListener {
         this.redissonClient = redissonClient;
     }
 
-    @RabbitListener(queues = RabbitMQConfig.ORDER_TIMEOUT_QUEUE)
+    @RabbitListener(queues = RabbitMQConfig.ORDER_TIMEOUT_QUEUE,
+            containerFactory = RabbitMQConfig.ORDER_TIMEOUT_LISTENER_CONTAINER_FACTORY)
     public void handleOrderTimeout(Long orderId) {
         log.info("处理支付超时订单，订单id：{}", orderId);
 
