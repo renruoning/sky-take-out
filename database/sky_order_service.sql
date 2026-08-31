@@ -77,3 +77,14 @@ CREATE TABLE `orders` (
   -- migration_orders_user_time_id_index.sql这两次迁移的说明）
   KEY `idx_orders_user_time` (`user_id`,`order_time` DESC,`id` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8_bin COMMENT='订单表';
+
+-- 下单失败后的库存补偿兜底，见migration_stock_compensation_log.sql的说明
+CREATE TABLE `stock_compensation_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `stock_items` text NOT NULL COMMENT '需要恢复的库存明细（JSON序列化的List<StockChangeItemDTO>）',
+  `status` tinyint(1) NOT NULL DEFAULT '0' COMMENT '0待补偿 1已完成',
+  `create_time` datetime NOT NULL,
+  `update_time` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_status_create_time` (`status`,`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='下单失败后的库存补偿记录，配合定时任务兜底重试';

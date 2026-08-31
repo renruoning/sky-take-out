@@ -1,5 +1,6 @@
 package com.sky.service.impl;
 
+import com.alibaba.fastjson.JSON;
 import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
 import com.sky.constant.MessageConstant;
@@ -17,12 +18,14 @@ import com.sky.entity.AddressBook;
 import com.sky.entity.OrderDetail;
 import com.sky.entity.Orders;
 import com.sky.entity.ShoppingCart;
+import com.sky.entity.StockCompensationLog;
 import com.sky.entity.User;
 import com.sky.exception.AddressBookBusinessException;
 import com.sky.exception.OrderBusinessException;
 import com.sky.exception.ShoppingCartBusinessException;
 import com.sky.mapper.OrderDetailMapper;
 import com.sky.mapper.OrderMapper;
+import com.sky.mapper.StockCompensationLogMapper;
 import com.sky.result.Result;
 import com.sky.result.PageResult;
 import com.sky.result.CursorPageResult;
@@ -39,8 +42,15 @@ import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.BeanUtils;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.retry.RetryCallback;
+import org.springframework.retry.backoff.ExponentialBackOffPolicy;
+import org.springframework.retry.policy.SimpleRetryPolicy;
+import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.CollectionUtils;
 
 import java.math.BigDecimal;
@@ -62,12 +72,14 @@ public class OrderServiceImpl implements OrderService {
 
     private final OrderMapper orderMapper;
     private final OrderDetailMapper orderDetailMapper;
+    private final StockCompensationLogMapper stockCompensationLogMapper;
     private final SkyServerClient skyServerClient;
     private final ProductClient productClient;
     private final WeChatPayUtil weChatPayUtil;
     private final RabbitTemplate rabbitTemplate;
     private final RedisTemplate<String, Object> redisTemplate;
     private final RedissonClient redissonClient;
+    private final TransactionTemplate requiresNewTransactionTemplate;
 
     private static final String SUBMIT_LOCK_PREFIX = "lock:order:submit:";
     private static final Duration SUBMIT_LOCK_TTL = Duration.ofSeconds(5);
@@ -90,17 +102,22 @@ public class OrderServiceImpl implements OrderService {
             Orders.PENDING_PAYMENT, Orders.TO_BE_CONFIRMED, Orders.CONFIRMED,
             Orders.DELIVERY_IN_PROGRESS, Orders.COMPLETED);
 
-    OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, SkyServerClient skyServerClient,
+    OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper,
+                      StockCompensationLogMapper stockCompensationLogMapper, SkyServerClient skyServerClient,
                       ProductClient productClient, WeChatPayUtil weChatPayUtil, RabbitTemplate rabbitTemplate,
-                      RedisTemplate<String, Object> redisTemplate, RedissonClient redissonClient) {
+                      RedisTemplate<String, Object> redisTemplate, RedissonClient redissonClient,
+                      PlatformTransactionManager transactionManager) {
         this.orderMapper = orderMapper;
         this.orderDetailMapper = orderDetailMapper;
+        this.stockCompensationLogMapper = stockCompensationLogMapper;
         this.skyServerClient = skyServerClient;
         this.productClient = productClient;
         this.weChatPayUtil = weChatPayUtil;
         this.rabbitTemplate = rabbitTemplate;
         this.redisTemplate = redisTemplate;
         this.redissonClient = redissonClient;
+        this.requiresNewTransactionTemplate = new TransactionTemplate(transactionManager);
+        this.requiresNewTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -164,6 +181,67 @@ public class OrderServiceImpl implements OrderService {
         Orders latest = orderMapper.getById(orderId);
         if (latest == null || !Orders.CANCELLED.equals(latest.getStatus())) {
             throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
+    }
+
+    /**
+     * 下单失败后的库存补偿：扣库存已经成功、但建单这一步失败了，要把库存加回去。分两层兜底：
+     * 1) 同步重试3次（1s起步指数退避到10s封顶，跟OrderTimeoutListener那条MQ重试同一组参数）；
+     * 2) 在重试之前，先把"需要恢复哪些库存"落到stock_compensation_log表（独立事务，见
+     *    persistPendingCompensation），这样同步重试3次耗尽、或者进程在补偿完成之前直接崩溃，
+     *    StockCompensationTask这个定时任务也能接手继续重试，不会像原来那样一失败就只剩一条
+     *    日志、彻底没有挽回的机会
+     */
+    private void restoreStockWithRetry(List<StockChangeItemDTO> stockItems) {
+        Long logId = persistPendingCompensation(stockItems);
+
+        RetryTemplate retryTemplate = new RetryTemplate();
+        retryTemplate.setRetryPolicy(new SimpleRetryPolicy(3));
+        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
+        backOffPolicy.setInitialInterval(1000);
+        backOffPolicy.setMultiplier(2.0);
+        backOffPolicy.setMaxInterval(10000);
+        retryTemplate.setBackOffPolicy(backOffPolicy);
+
+        try {
+            retryTemplate.execute((RetryCallback<Void, Exception>) context -> {
+                if (context.getRetryCount() > 0) {
+                    log.info("订单创建失败后回滚库存重试第{}次，stockItems={}", context.getRetryCount(), stockItems);
+                }
+                productClient.restoreStock(stockItems);
+                return null;
+            });
+            if (logId != null) {
+                stockCompensationLogMapper.markDone(logId);
+            }
+        } catch (Exception restoreEx) {
+            log.error("订单创建失败后回滚库存重试3次后仍失败（商品服务不可达/异常），出现库存扣减与订单未创建的不一致，" +
+                    "stockItems={}，已落地补偿记录{}，等待定时任务兜底重试，需要关注", stockItems, logId, restoreEx);
+        }
+    }
+
+    /**
+     * 在真正尝试补偿之前，先把"需要恢复哪些库存"落到独立的补偿记录表——必须用REQUIRES_NEW跑在
+     * 一个新事务里提交，不能让这条insert跟着submit()本身的事务一起回滚（这里正处在submit()的
+     * catch块里，外层事务注定要回滚，如果这条insert复用同一个连接/事务，写了也等于没写）。
+     * 落地失败（比如数据库也恰好不可达）只记日志、返回null——宁可没有这条兜底记录，也不能让
+     * "记录补偿意图"这个动作本身的失败，阻塞了紧接着要执行的真正补偿重试
+     */
+    private Long persistPendingCompensation(List<StockChangeItemDTO> stockItems) {
+        try {
+            return requiresNewTransactionTemplate.execute(status -> {
+                StockCompensationLog logEntry = StockCompensationLog.builder()
+                        .stockItems(JSON.toJSONString(stockItems))
+                        .status(StockCompensationLog.PENDING)
+                        .createTime(LocalDateTime.now())
+                        .updateTime(LocalDateTime.now())
+                        .build();
+                stockCompensationLogMapper.insert(logEntry);
+                return logEntry.getId();
+            });
+        } catch (Exception e) {
+            log.error("落地库存补偿记录失败（数据库异常），本次补偿将不会被定时任务兜底重试，stockItems={}", stockItems, e);
+            return null;
         }
     }
 
@@ -317,12 +395,7 @@ public class OrderServiceImpl implements OrderService {
                         .build();
             } catch (RuntimeException e) {
                 log.error("库存已扣减但订单创建失败，回滚库存，stockItems={}", stockItems, e);
-                try {
-                    productClient.restoreStock(stockItems);
-                } catch (Exception restoreEx) {
-                    log.error("订单创建失败后回滚库存也失败（商品服务不可达/异常），出现库存扣减与订单未创建的不一致，" +
-                            "stockItems={}，需要人工介入核对！", stockItems, restoreEx);
-                }
+                restoreStockWithRetry(stockItems);
                 throw e;
             }
         } finally {
