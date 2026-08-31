@@ -154,6 +154,20 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
+     * CAS(updateWithStatusGuard)没命中之后的复核：只有当前状态已经是CANCELLED，才说明是被另一条
+     * 取消类路径（用户/管理端/拒单/超时自动取消）抢先做掉了同一个意图——调用方想要的结果（这笔订单
+     * 不再继续）已经达成，应该当成功处理，不抛异常；如果当前状态是别的值（比如已经被接单/派送/完成），
+     * 才是真正的状态冲突，需要让调用方知道。没有这一步的话，Redis不可达导致锁失效、两条路径并发撞上
+     * 同一个订单时，输掉CAS的那一方会让一次"本该成功"的取消请求对外报错，即便最终结果是对的
+     */
+    private void verifyAlreadyCancelledOrThrow(Long orderId) {
+        Orders latest = orderMapper.getById(orderId);
+        if (latest == null || !Orders.CANCELLED.equals(latest.getStatus())) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
+    }
+
+    /**
      * 取消订单场景专用：抢到锁执行action并保证释放；抢不到锁说明这个订单同一时刻正被另一条取消路径处理，
      * 直接拒绝而不是让两边都以为自己能改，这是HTTP路径（用户/管理端手动取消）用的版本，
      * 抢不到会抛异常让调用方看到明确的"正在处理中"提示。Redisson本身不可达时fail-open：
@@ -504,7 +518,8 @@ public class OrderServiceImpl implements OrderService {
             orders.setCancelReason("用户取消");
             orders.setCancelTime(LocalDateTime.now());
             if (orderMapper.updateWithStatusGuard(orders, CANCELLABLE_BY_USER) == 0) {
-                throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+                verifyAlreadyCancelledOrThrow(id);
+                return;
             }
 
             // 下单时扣了库存，取消了就要加回去
@@ -678,7 +693,8 @@ public class OrderServiceImpl implements OrderService {
             orders.setRejectionReason(ordersRejectionDTO.getRejectionReason());
             orders.setCancelTime(LocalDateTime.now());
             if (orderMapper.updateWithStatusGuard(orders, REJECTABLE) == 0) {
-                throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+                verifyAlreadyCancelledOrThrow(latest.getId());
+                return;
             }
 
             // 下单时扣了库存，拒单了就要加回去
