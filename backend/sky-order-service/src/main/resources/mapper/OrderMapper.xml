@@ -14,35 +14,85 @@
          #{estimatedDeliveryTime}, #{deliveryStatus}, #{deliveryTime}, #{packAmount}, #{tablewareNumber}, #{tablewareStatus})
     </insert>
 
+    <sql id="orderUpdateFields">
+        <if test="cancelReason != null and cancelReason!='' ">
+            cancel_reason=#{cancelReason},
+        </if>
+        <if test="rejectionReason != null and rejectionReason!='' ">
+            rejection_reason=#{rejectionReason},
+        </if>
+        <if test="cancelTime != null">
+            cancel_time=#{cancelTime},
+        </if>
+        <if test="payStatus != null">
+            pay_status=#{payStatus},
+        </if>
+        <if test="payMethod != null">
+            pay_method=#{payMethod},
+        </if>
+        <if test="checkoutTime != null">
+            checkout_time=#{checkoutTime},
+        </if>
+        <if test="status != null">
+            status = #{status},
+        </if>
+        <if test="deliveryTime != null">
+            delivery_time = #{deliveryTime}
+        </if>
+    </sql>
+
     <update id="update" parameterType="com.sky.entity.Orders">
         update orders
         <set>
-            <if test="cancelReason != null and cancelReason!='' ">
-                cancel_reason=#{cancelReason},
-            </if>
-            <if test="rejectionReason != null and rejectionReason!='' ">
-                rejection_reason=#{rejectionReason},
-            </if>
-            <if test="cancelTime != null">
-                cancel_time=#{cancelTime},
-            </if>
-            <if test="payStatus != null">
-                pay_status=#{payStatus},
-            </if>
-            <if test="payMethod != null">
-                pay_method=#{payMethod},
-            </if>
-            <if test="checkoutTime != null">
-                checkout_time=#{checkoutTime},
-            </if>
-            <if test="status != null">
-                status = #{status},
-            </if>
-            <if test="deliveryTime != null">
-                delivery_time = #{deliveryTime}
-            </if>
+            <include refid="orderUpdateFields"/>
         </set>
         where id = #{id}
+    </update>
+
+    <!-- 取消类状态流转专用：在锁保护的读-判断-写之外，额外用WHERE status做一次CAS兜底——
+         就算某个极端情况下锁没起到应有的互斥效果，这条UPDATE本身在DB行锁层面依然是原子的，
+         第二个到达的写会因为status已经不在expectedStatuses里而影响0行，不会覆盖第一次写的结果。
+         两个入参（orders/expectedStatuses）用@Param标了名字，所以这里访问字段要带orders.前缀，
+         不能直接复用上面那个假设根对象就是Orders的orderUpdateFields片段 -->
+    <update id="updateWithStatusGuard">
+        update orders
+        <set>
+            <if test="orders.cancelReason != null and orders.cancelReason!='' ">
+                cancel_reason=#{orders.cancelReason},
+            </if>
+            <if test="orders.rejectionReason != null and orders.rejectionReason!='' ">
+                rejection_reason=#{orders.rejectionReason},
+            </if>
+            <if test="orders.cancelTime != null">
+                cancel_time=#{orders.cancelTime},
+            </if>
+            <if test="orders.payStatus != null">
+                pay_status=#{orders.payStatus},
+            </if>
+            <if test="orders.payMethod != null">
+                pay_method=#{orders.payMethod},
+            </if>
+            <if test="orders.checkoutTime != null">
+                checkout_time=#{orders.checkoutTime},
+            </if>
+            <if test="orders.status != null">
+                status = #{orders.status},
+            </if>
+            <if test="orders.deliveryTime != null">
+                delivery_time = #{orders.deliveryTime}
+            </if>
+        </set>
+        where id = #{orders.id}
+        and status in
+        <foreach collection="expectedStatuses" item="s" open="(" separator="," close=")">
+            #{s}
+        </foreach>
+    </update>
+
+    <!-- 库存恢复的幂等门闩：CAS成功（返回1）才是"这次调用真正拿到恢复库存的资格"，调用方应在
+         拿到资格之后才去调product-service的恢复库存接口，不能反过来先调用再标记——见调用方注释 -->
+    <update id="markStockRestored">
+        update orders set stock_restored = 1 where id = #{id} and stock_restored = 0
     </update>
 
     <select id="pageQuery" resultType="Orders">

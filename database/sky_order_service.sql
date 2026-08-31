@@ -66,6 +66,7 @@ CREATE TABLE `orders` (
   `pack_amount` int DEFAULT NULL COMMENT '打包费',
   `tableware_number` int DEFAULT NULL COMMENT '餐具数量',
   `tableware_status` tinyint(1) NOT NULL DEFAULT '1' COMMENT '餐具数量状态  1按餐量提供  0选择具体数量',
+  `stock_restored` tinyint(1) NOT NULL DEFAULT '0' COMMENT '库存是否已恢复 0否 1是（取消/拒单/超时取消时置1，防止重复恢复）',
   PRIMARY KEY (`id`),
   KEY `idx_orders_status_order_time` (`status`,`order_time`),
   KEY `idx_orders_user_id` (`user_id`),

@@ -82,6 +82,14 @@ public class OrderServiceImpl implements OrderService {
     static final String CANCEL_LOCK_PREFIX = "lock:order:cancel:";
     private static final long CANCEL_LOCK_WAIT_SECONDS = 2;
 
+    // updateWithStatusGuard的CAS兜底用：每条取消类路径允许执行的"当前状态"集合，跟各自原来
+    // 那段if判断的条件一一对应，只是把判断结果也交给数据库在UPDATE的WHERE里再确认一遍
+    private static final List<Integer> CANCELLABLE_BY_USER = List.of(Orders.PENDING_PAYMENT, Orders.TO_BE_CONFIRMED);
+    private static final List<Integer> REJECTABLE = List.of(Orders.TO_BE_CONFIRMED);
+    private static final List<Integer> CANCELLABLE_BY_SHOP = List.of(
+            Orders.PENDING_PAYMENT, Orders.TO_BE_CONFIRMED, Orders.CONFIRMED,
+            Orders.DELIVERY_IN_PROGRESS, Orders.COMPLETED);
+
     OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, SkyServerClient skyServerClient,
                       ProductClient productClient, WeChatPayUtil weChatPayUtil, RabbitTemplate rabbitTemplate,
                       RedisTemplate<String, Object> redisTemplate, RedissonClient redissonClient) {
@@ -121,9 +129,18 @@ public class OrderServiceImpl implements OrderService {
      * 订单取消时的库存补偿：查这笔订单实际买了什么，加回对应的库存。fail-open——恢复失败只记日志，
      * 不能因为一个补偿动作失败就连"取消订单"这个主操作本身都做不成；代价是这种情况下会残留一个
      * 库存和实际订单状态不一致的窗口，需要人工/对账兜底，这是手写补偿事务（而不是Seata这类真正的
-     * 分布式事务框架）天然留下的缺口
+     * 分布式事务框架）天然留下的缺口。
+     * 调用product-service之前先拿markStockRestored这把幂等门闩——这是防止分布式锁失效时同一笔
+     * 订单被重复恢复库存的最后一道保险（锁保护的是这个方法会不会被并发进入，门闩保护的是"就算真的
+     * 被并发进入了，也只有一次真正调下去"）。门闩必须在调用product-service之前拿到，不能反过来
+     * 先调用再标记：那样就变成"标记了但没调成功"和"调成功了但没标记"两种半途状态都可能出现，
+     * 门闩本身就失去意义了
      */
     private void restoreStockForOrder(Long orderId) {
+        if (orderMapper.markStockRestored(orderId) == 0) {
+            log.info("订单{}库存已经被恢复过（重复触发的取消路径），跳过本次恢复", orderId);
+            return;
+        }
         try {
             List<OrderDetail> details = orderDetailMapper.getByOrderId(orderId);
             List<StockChangeItemDTO> items = mergeStockItems(details,
@@ -481,11 +498,14 @@ public class OrderServiceImpl implements OrderService {
                 orders.setPayStatus(Orders.REFUND);
             }
 
-            // 更新订单状态、取消原因、取消时间
+            // 更新订单状态、取消原因、取消时间——用CAS版本兜底：就算锁没能如预期生效，status已经
+            // 不在CANCELLABLE_BY_USER里时这条UPDATE影响0行，不会覆盖别的路径已经写好的结果
             orders.setStatus(Orders.CANCELLED);
             orders.setCancelReason("用户取消");
             orders.setCancelTime(LocalDateTime.now());
-            orderMapper.update(orders);
+            if (orderMapper.updateWithStatusGuard(orders, CANCELLABLE_BY_USER) == 0) {
+                throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+            }
 
             // 下单时扣了库存，取消了就要加回去
             restoreStockForOrder(id);
@@ -657,7 +677,9 @@ public class OrderServiceImpl implements OrderService {
             orders.setStatus(Orders.CANCELLED);
             orders.setRejectionReason(ordersRejectionDTO.getRejectionReason());
             orders.setCancelTime(LocalDateTime.now());
-            orderMapper.update(orders);
+            if (orderMapper.updateWithStatusGuard(orders, REJECTABLE) == 0) {
+                throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+            }
 
             // 下单时扣了库存，拒单了就要加回去
             restoreStockForOrder(latest.getId());
@@ -694,7 +716,12 @@ public class OrderServiceImpl implements OrderService {
             orders.setStatus(Orders.CANCELLED);
             orders.setCancelReason(ordersCancelDTO.getCancelReason());
             orders.setCancelTime(LocalDateTime.now());
-            orderMapper.update(orders);
+            // 0行说明在我们读到ordersDB之后、写之前，别的路径已经把它改成CANCELLED了——
+            // 跟上面"已经是取消状态就跳过"是同一种情况，静默跳过就好，不需要抛异常打断管理端操作
+            if (orderMapper.updateWithStatusGuard(orders, CANCELLABLE_BY_SHOP) == 0) {
+                log.info("订单{}管理端取消时CAS未命中（已被别的路径改变状态），跳过", ordersCancelDTO.getId());
+                return;
+            }
 
             // 下单时扣了库存，取消了就要加回去
             restoreStockForOrder(ordersCancelDTO.getId());

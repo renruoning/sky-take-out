@@ -33,6 +33,10 @@ public class OrderTimeoutListener {
     private static final String CANCEL_LOCK_PREFIX = "lock:order:cancel:";
     private static final long CANCEL_LOCK_WAIT_SECONDS = 2;
 
+    // updateWithStatusGuard的CAS兜底用，跟OrderServiceImpl里的同名常量含义一致：只有订单仍处于
+    // 待付款状态时，这次自动取消的UPDATE才会真正生效
+    private static final List<Integer> PENDING_PAYMENT_ONLY = List.of(Orders.PENDING_PAYMENT);
+
     private final OrderMapper orderMapper;
     private final OrderDetailMapper orderDetailMapper;
     private final ProductClient productClient;
@@ -85,7 +89,12 @@ public class OrderTimeoutListener {
             orders.setStatus(Orders.CANCELLED);
             orders.setCancelReason("支付超时，自动取消");
             orders.setCancelTime(LocalDateTime.now());
-            orderMapper.update(orders);
+            // CAS兜底：0行说明在上面这次getById之后、写之前，订单已经被别的路径改变状态了——
+            // 大概率是用户/管理端抢先处理了，这条超时消息不该再生效，跳过就行，不用重试
+            if (orderMapper.updateWithStatusGuard(orders, PENDING_PAYMENT_ONLY) == 0) {
+                log.info("订单{}超时自动取消时CAS未命中（已被别的路径改变状态），跳过", orderId);
+                return;
+            }
 
             // 下单时扣了库存，超时自动取消了也要加回去，跟OrderServiceImpl.userCancelById/cancel同款逻辑
             restoreStock(orderId);
@@ -93,6 +102,12 @@ public class OrderTimeoutListener {
     }
 
     private void restoreStock(Long orderId) {
+        // 幂等门闩：跟OrderServiceImpl.restoreStockForOrder同款逻辑，防止分布式锁失效时
+        // 同一笔订单被重复恢复库存，必须在调用product-service之前拿到
+        if (orderMapper.markStockRestored(orderId) == 0) {
+            log.info("订单{}库存已经被恢复过（重复触发的取消路径），跳过本次恢复", orderId);
+            return;
+        }
         try {
             List<OrderDetail> details = orderDetailMapper.getByOrderId(orderId);
             Map<String, StockChangeItemDTO> merged = new LinkedHashMap<>();

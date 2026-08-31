@@ -35,6 +35,22 @@ public interface OrderMapper {
     void update(Orders orders);
 
     /**
+     * 取消类状态流转专用：多加一个status IN (expectedStatuses)的CAS条件，返回受影响行数。
+     * 0行说明订单当前状态已经不在expectedStatuses里了（被别的路径抢先改掉，或者调用方自己的
+     * 前置校验和这次真正执行之间过期了），调用方要按"状态冲突"处理，不能假定这次写一定生效
+     * @param orders 只需要设置id和要改的字段（跟update用法一样）
+     * @param expectedStatuses 允许执行这次更新的当前状态集合
+     */
+    int updateWithStatusGuard(@Param("orders") Orders orders, @Param("expectedStatuses") List<Integer> expectedStatuses);
+
+    /**
+     * 库存恢复的幂等门闩：CAS更新stock_restored从0到1，返回1表示这次调用者拿到了"去恢复库存"的
+     * 资格，返回0表示已经有别的调用把这个订单标记为恢复过了，不该再去调product-service
+     * @param id
+     */
+    int markStockRestored(@Param("id") Long id);
+
+    /**
      * 分页条件查询并按下单时间排序
      * @param ordersPageQueryDTO
      */
