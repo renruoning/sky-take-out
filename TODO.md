@@ -6,12 +6,6 @@
 
 ## 面试高频但评估后不需要真做
 
-- **`review/list`索引优化**：分页查询按`shop_id`过滤+`create_time`排序，现在评价数据量小看不出来，量大了会重演`historyOrders`那个问题（`Using filesort`）。
-  - **方案**：跟`historyOrders`那次完全同一套打法。第一步加联合索引`(shop_id, create_time DESC)`（短期，offset分页够用时先做这一步，`EXPLAIN`确认`key`走新索引、`Extra`不再出现`Using filesort`）；量真的大到offset分页的`COUNT(*)`开始变贵时，再引入游标分页，这时索引要跟`historyOrders`一样升级成三列`(shop_id, create_time DESC, id DESC)`——两列索引只覆盖排序第一个字段，覆盖不了游标查询`(create_time, id) < (?, ?)`这种tie-break比较，会退化回filesort，这是`historyOrders`那次已经踩过一次的坑，这里不用重新踩。
-  - **迁移文件**：照抄`database/migration_orders_user_time_index.sql`/`migration_orders_user_time_id_index.sql`的模式，新增`database/migration_review_shop_time_index.sql`。
-  - **验证方式**：`SHOW INDEX`确认索引存在；`EXPLAIN SELECT ... WHERE shop_id=? ORDER BY create_time DESC`确认走新索引且无filesort；如果做到游标分页那一步，要写脚本把某店铺的评价从第一页翻到`hasMore=false`，核对总数、去重、`create_time`严格递减，不能只测单页。
-  - 低频原因：知识点和`historyOrders`那条（已做完）完全一样，面试官问完一次不会重复问几乎一样的场景。
-
 - **读写分离**：现在单实例MySQL，所有读写都打主库。
   - **方案**：基础设施上至少1主N从，用MySQL原生binlog复制（异步或半同步）。路由方式两条路：①中间件（ShardingSphere-JDBC/Proxy），配置里配一条读写分离规则，应用代码不用改；②应用层自己维护主/从两个数据源，用`AbstractRoutingDataSource`按"当前是否在写事务里"动态路由——在写事务（`@Transactional`）里或者显式标记的写方法强制走主库，纯查询走从库。
   - **一致性坑**：主从复制延迟会导致"写后立即读"读不到最新数据。这个项目里最容易踩的场景是"下单/支付后立刻查详情"——对策要么强制这类写后读走主库，要么业务上容忍最终一致（历史订单列表晚几秒同步没问题），要么用半同步复制缩小延迟窗口。

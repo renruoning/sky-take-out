@@ -21,5 +21,8 @@ CREATE TABLE `review` (
   `create_time` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_review_order_id` (`order_id`),
-  KEY `idx_review_shop_id` (`shop_id`)
+  KEY `idx_review_shop_id` (`shop_id`),
+  -- pageQuery是 WHERE shop_id = ? ORDER BY create_time DESC，两列索引让排序也走索引，
+  -- 不再Using filesort（见database/migration_review_shop_time_index.sql）
+  KEY `idx_review_shop_time` (`shop_id`,`create_time` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='订单评价';
