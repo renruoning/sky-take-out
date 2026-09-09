@@ -19,6 +19,12 @@ spring:
     url: jdbc:mysql://${sky.datasource.host}:${sky.datasource.port}/${sky.datasource.database}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
     username: ${sky.datasource.username}
     password: ${sky.datasource.password}
+    # 读写分离的从库连接，见com.sky.config.DataSourceConfiguration——只有标了@Slave的方法才会用到
+    slave:
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      url: jdbc:mysql://${sky.datasource.slave-host}:${sky.datasource.slave-port}/${sky.datasource.database}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
+      username: ${sky.datasource.slave-username}
+      password: ${sky.datasource.slave-password}
   redis:
     password: ${sky.redis.password}
     database: ${sky.redis.database}

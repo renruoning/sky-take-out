@@ -32,6 +32,7 @@ import com.sky.vo.OrderPaymentVO;
 import com.sky.vo.OrderStatisticsVO;
 import com.sky.vo.OrderSubmitVO;
 import com.sky.vo.OrderVO;
+import com.sky.annotation.Slave;
 import com.sky.config.RabbitMQConfig;
 import io.seata.saga.engine.StateMachineEngine;
 import io.seata.saga.statelang.domain.ExecutionStatus;
@@ -394,7 +395,11 @@ public class OrderServiceImpl implements OrderService {
      * 游标分页：不做COUNT(*)，按(order_time desc, id desc)排keyset。cursorId为null查第一页，
      * 否则查"排在上一页最后一条记录之后"的下一批——historyOrders这种连续下滑的场景不需要跳页，
      * 换掉offset分页省下"翻到第N页都要先数一遍总数"这个随数据量增长而变贵的开销（见REPORT.md）
+     * <p>
+     * 标了@Slave：读写分离场景下典型的"普通读"——用户翻自己的历史订单，容忍读到的数据比主库晚
+     * 一点复制延迟（差个几十毫秒不影响体验），跟submit()下单这类必须读到最新数据的强一致场景不是一回事
      */
+    @Slave
     public CursorPageResult pageQuery4User(Long cursorId, int limit, Integer status) {
         Long userId = BaseContext.getCurrentId();
 

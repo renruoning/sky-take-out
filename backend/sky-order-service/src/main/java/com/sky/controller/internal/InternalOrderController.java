@@ -1,5 +1,6 @@
 package com.sky.controller.internal;
 
+import com.sky.annotation.Slave;
 import com.sky.constant.MessageConstant;
 import com.sky.dto.DailyOrderStatDTO;
 import com.sky.dto.GoodsSalesDTO;
@@ -48,6 +49,13 @@ public class InternalOrderController {
         this.shopMapper = shopMapper;
     }
 
+    /**
+     * 故意不标@Slave：这是"强一致读"的代表场景——invoice-service/review-service申请发票/提交评价前
+     * 会调这个接口校验订单归属和状态（比如刚confirm完的订单status是不是已经推进到COMPLETED），
+     * 如果读到从库上还没同步过来的旧状态，会出现"订单其实已完成，但发票服务查到的还是待完成"这种
+     * 错误拒绝。读写分离里"写走主库、普通读走从库、强一致读走主库"这三类里的最后一类，不需要
+     * 额外代码——默认（不标注）就是走主库，见DataSourceContextHolder的说明
+     */
     @GetMapping("/internal/order/{id}")
     public Result<OrderSummaryVO> getOrderSummary(@PathVariable Long id) {
         Orders order = orderMapper.getById(id);
@@ -74,8 +82,10 @@ public class InternalOrderController {
 
     /**
      * 工作台"营业数据"用的原始订单统计数字，收敛了原来WorkspaceServiceImpl.getBusinessData()里
-     * 对同一个map对象反复变更status字段发起的3次countByMap/sumByMap调用，一次Feign往返返回
+     * 对同一个map对象反复变更status字段发起的3次countByMap/sumByMap调用，一次Feign往返返回。
+     * 标了@Slave：报表聚合类查询天然容忍统计数字比主库晚几十毫秒
      */
+    @Slave
     @GetMapping("/internal/order/business-stats")
     public Result<OrderBusinessStatVO> getBusinessStats(@RequestParam Long shopId,
                                                           @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime begin,
@@ -101,8 +111,9 @@ public class InternalOrderController {
 
     /**
      * 管理端工作台"订单管理"总览，收敛了原来WorkspaceServiceImpl.getOrderOverView()里
-     * 对5种状态分别发起的5次countByMap调用，一次Feign往返返回
+     * 对5种状态分别发起的5次countByMap调用，一次Feign往返返回。标了@Slave，理由同上
      */
+    @Slave
     @GetMapping("/internal/order/overview")
     public Result<OrderOverViewVO> getOrderOverview(@RequestParam Long shopId) {
         Map<String, Object> map = new HashMap<>();
@@ -135,8 +146,10 @@ public class InternalOrderController {
 
     /**
      * 报表用的按天分组订单统计，供ReportServiceImpl的turnoverStatistics/ordersStatistics/
-     * exportBusinessData共用一次查询结果（原来的getDailyOrderStatMap()逻辑原样搬过来）
+     * exportBusinessData共用一次查询结果（原来的getDailyOrderStatMap()逻辑原样搬过来）。
+     * 标了@Slave，理由同上
      */
+    @Slave
     @GetMapping("/internal/order/daily-stats")
     public Result<List<DailyOrderStatDTO>> getDailyStats(@RequestParam Long shopId,
                                                            @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd") java.time.LocalDate begin,
@@ -146,8 +159,10 @@ public class InternalOrderController {
     }
 
     /**
-     * 报表用的销量排名top10（原来ReportServiceImpl.salesTop10Statistics()里直接查orderDetailMapper那部分）
+     * 报表用的销量排名top10（原来ReportServiceImpl.salesTop10Statistics()里直接查orderDetailMapper那部分）。
+     * 标了@Slave，理由同上
      */
+    @Slave
     @GetMapping("/internal/order/sales-top10")
     public Result<List<GoodsSalesDTO>> getSalesTop10(@RequestParam Long shopId,
                                                        @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd") java.time.LocalDate begin,

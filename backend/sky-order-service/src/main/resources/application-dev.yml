@@ -5,6 +5,12 @@ sky:
     database: sky_order_service
     username: root
     password: root
+    # 读写分离的从库——本机起的一个MySQL从库容器，binlog复制自上面这个主库的sky_order_service，
+    # 见deploy/mysql-replica/README.md
+    slave-host: localhost
+    slave-port: 3307
+    slave-username: root
+    slave-password: root
   redis:
     sentinel-master: mymaster
     sentinel-nodes: 127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381
