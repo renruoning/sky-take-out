@@ -2,7 +2,7 @@
 
 当前项目是单体应用 + 单个MySQL，能跑通完整业务闭环（多商户/多品类/购物车/下单/评价/发票/AI客服），但离真实工业级设计还有距离。这份清单按"如果这是一个要真正上线、要扛真实流量的项目，会按什么优先级去补"来排的，不是越花哨越好——排序本身就是"先保证不出错，再谈快，最后才谈架构升级"。
 
-这份文件只收已经做完并验证过的事。曾经拆出去过一份`TODO.md`专门收"分析完成但代码还没落地"的条目，最后一条（分布式锁）也做完并验证过之后，`TODO.md`已经清空并删除——当前没有还欠着、又打算真去做的事项。
+这份文件只收已经做完并验证过的事。曾经拆出去过一份`TODO.md`专门收"分析完成但代码还没落地"的条目，最后一条（分布式锁）也做完并验证过之后一度清空删除；现在`TODO.md`重新建了起来，收的是另一类条目——"分析清楚了、评估后故意不落地"的项（面试低频考点、投入产出比不划算的设计题），跟"打算真去做但还没做"是两回事，当前没有后一种事项。
 
 ## P0：基础可靠性（比性能优化更优先，现在就有实际风险的）
 
@@ -110,10 +110,18 @@
 - [x] **分布式事务**：这条item最早的结论是"不适用"——探索下来发现下单不需要跨服务扣库存，购物车/订单明细在加购物车那一刻就已经快照了商品价格。后来专门补了一个真实的库存扣减功能（见下面这条），"不适用"的前提不再成立，这条item因此从"不适用"改成了真实实现，见下方"菜品/套餐库存扣减"。
 - [x] **菜品/套餐库存扣减**：专门为了让上面那条"分布式事务"从"不适用"变成真实场景而加的功能——`dish`/`setmeal`各加一个`stock`字段（现有数据全部回填成1000，`database/migration_add_stock_columns.sql`），下单时扣、取消时还。这是这个项目里唯一一处"一次业务操作需要跨两个服务的数据库做写操作"的地方：库存在`sky-product-service`的库，订单在`sky-order-service`自己的库，两边没法用同一个本地事务盖住。
   - **product-service这一侧**：`StockServiceImpl.deductStock()`在自己的本地事务里逐条按`update dish set stock=stock-? where id=? and stock>=?`原子扣（`WHERE`条件本身保证不会扣成负数，不用先SELECT再判断），一批条目里只要有一条库存不够就抛异常，触发这个事务整体回滚——同一笔订单涉及的库存要么全扣成功要么全不扣。新增`/internal/stock/deduct`、`/internal/stock/restore`两个内部接口，走已有的`InternalPathBlockingFilter`防外部访问。
-  - **order-service这一侧（真正的分布式事务问题出现的地方）**：`submit()`里先调`ProductClient.deductStock()`，成功后才建订单；建订单这一步（插订单、插明细、清购物车）如果失败，`catch`块里手动调`restoreStock()`把库存加回去——这是一个手写的补偿事务（saga风格），不是Seata那种真正的分布式事务框架。取消订单的三条路径（用户取消`userCancelById`、管理端取消`cancel`、拒单`rejection`、超时自动取消`OrderTimeoutListener`）都在各自的`runWithCancelLock`分布式锁保护下调用`restoreStock`，管理端`cancel()`额外补了"已经是取消状态就跳过"的判断（发现这里原来没有这个判断，不加的话连续点两次取消会把库存多恢复一次）；`rejection()`原来没有加分布式锁，这次跟其它取消路径统一补上，不然拒单和管理端取消可能撞在同一个订单上导致库存恢复两次。
-  - **这个方案的真实局限，如实记录**：如果"建单失败"和"补偿恢复库存"这两步都失败（比如商品服务恰好在恢复库存那一刻也不可达），会留下"库存被扣但订单没建成"的不一致，需要人工/对账介入——日志里会打出`ERROR`级别、带着具体条目明细的记录，但没有自动重试或持久化补偿日志兜底。这个残余风险窗口正是Seata/TCC这类框架真正要解决的问题，这次故意没有引入那一整套机制（对这个项目的规模来说，为了补上一个概率很低的双重失败窗口去接一整套分布式事务框架不划算），但这个局限本身就是很好的面试素材——能讲清楚"手写补偿事务"和"Seata AT模式"到底差在哪、差的这一块具体是什么。
-  - **实测验证**：正常下单，库存按购买数量精确扣减（1000→998，对应订单里2份）；用户取消订单，库存精确加回（998→1000）；再次取消同一笔已取消订单被正确拒绝（"订单状态错误"），库存不再重复恢复；故意把库存改到1（购物车里放2份），提交订单被拒（"库存不足"），库存和订单表都确认没有任何变化，没有残留脏数据；直接往RabbitMQ交易所发消息模拟"支付超时"触发`OrderTimeoutListener`（跳过真实的30分钟延迟），确认订单被自动取消且库存被正确恢复。管理端取消（`cancel`）和拒单（`rejection`）走的是完全相同的`restoreStockForOrder`代码路径，这次没有单独用管理端账号重新点一遍HTTP接口验证，是基于代码复用关系的合理推断，不是独立实测。
-  - **顺带发现的一个跟这次改动无关的预置bug**：`OrdersSubmitDTO.packAmount`是`Integer`，但`Orders.packAmount`是原始类型`int`——请求体不带`packAmount`字段时，`BeanUtils.copyProperties`试图把`null`塞进`int`的setter，抛`IllegalArgumentException`导致下单直接失败。这个bug跟库存功能无关，测试时意外触发（顺带验证了一次"建单失败触发库存回滚补偿"这条路径确实生效），先记在这里，没有顺手修（避免在这个PR里夹带无关的行为变更）。
+  - **order-service这一侧最初的实现（手写补偿，后来被Seata Saga整个替换掉，见下面单独一条）**：`submit()`里先调`ProductClient.deductStock()`，成功后才建订单；建订单这一步（插订单、插明细、清购物车）如果失败，`catch`块里手动调`restoreStock()`把库存加回去——是一个手写的补偿事务（saga风格），不是Seata那种真正的分布式事务框架。取消订单的三条路径（用户取消`userCancelById`、管理端取消`cancel`、拒单`rejection`、超时自动取消`OrderTimeoutListener`）都在各自的`runWithCancelLock`分布式锁保护下调用`restoreStock`，管理端`cancel()`额外补了"已经是取消状态就跳过"的判断（发现这里原来没有这个判断，不加的话连续点两次取消会把库存多恢复一次）；`rejection()`原来没有加分布式锁，这次跟其它取消路径统一补上，不然拒单和管理端取消可能撞在同一个订单上导致库存恢复两次。
+  - **这个手写方案当时的真实局限，如实记录**：如果"建单失败"和"补偿恢复库存"这两步都失败（比如商品服务恰好在恢复库存那一刻也不可达），会留下"库存被扣但订单没建成"的不一致，需要人工/对账介入——没有自动重试或持久化补偿日志兜底。这个残余风险窗口正是Seata/TCC这类框架真正要解决的问题，当时评估过后故意没有引入那一整套机制；后来（见下面`Seata Saga`那条）还是把这套换成了真正的Seata Saga，这条局限也就跟着被解决了。
+  - **实测验证（手写方案，Seata Saga上线前的记录）**：正常下单，库存按购买数量精确扣减（1000→998，对应订单里2份）；用户取消订单，库存精确加回（998→1000）；再次取消同一笔已取消订单被正确拒绝（"订单状态错误"），库存不再重复恢复；故意把库存改到1（购物车里放2份），提交订单被拒（"库存不足"），库存和订单表都确认没有任何变化，没有残留脏数据；直接往RabbitMQ交易所发消息模拟"支付超时"触发`OrderTimeoutListener`（跳过真实的30分钟延迟），确认订单被自动取消且库存被正确恢复。管理端取消（`cancel`）和拒单（`rejection`）走的是完全相同的`restoreStockForOrder`代码路径，当时没有单独用管理端账号重新点一遍HTTP接口验证，是基于代码复用关系的合理推断，不是独立实测。
+- [x] **把上面的手写补偿升级成真正的Seata Saga状态机**：之前"手写补偿事务（saga风格），不是Seata那种真正的分布式事务框架"这句话本身就是简历上"设计Saga模式补偿事务"经不起深挖的地方——这次把`submit()`里"扣库存→建订单"这段真正接进Seata Saga引擎，让状态机（而不是自己写的try/catch）来编排正向调用和失败补偿。**范围限定**：只改造这一段——用户取消/管理端取消/拒单/超时自动取消动的是"已经提交完成的订单"的后续业务状态，是新的业务事件而不是同一次Saga事务失败后的回滚，不适合也没必要用Saga包，`restoreStockForOrder`这条取消用的代码路径原样保留、完全没动。
+  - **基础设施**：新起一个`apache/seata-server:1.6.1`容器当TC（事务协调者），复用Nacos做注册/配置中心，`store.mode=db`，MySQL里新建`seata_server`库跑官方`global_table`/`branch_table`/`lock_table`/`distributed_lock`建表脚本（`database/seata_server_tc_tables.sql`）。order-service自己的库（`sky_order_service`）另外加了Seata Saga statelang存储表`seata_state_machine_def`/`seata_state_machine_inst`/`seata_state_inst`（`database/migration_seata_saga_statelang_tables.sql`），记录状态机每次跑到哪一步、成没成功、补偿有没有触发——这套官方表原生替代了原来那张`stock_compensation_log`表的作用。
+  - **状态机设计**（`backend/sky-order-service/src/main/resources/statelang/submit_order.json`）：`DeductStock`（扣库存）→`CreateOrder`（本地建单，仍然是独立的`@Transactional`）→`Succeed`；`DeductStock`声明`CompensateState: CompensateDeductStock`，`CreateOrder`失败时引擎自动触发`CompensationTrigger`回滚到这一步。动作类`SubmitOrderSagaActions`（`@Component("submitOrderSagaActions")`，bean名对应JSON里的`ServiceName`）实现`deductStock`/`compensateDeductStock`/`createOrder`三个方法。
+  - **一个实测复现过的正确性bug，不是纸面推演**：一开始`DeductStock`不管什么失败都笼统按引擎默认的"不确定（UN）"状态处理，导致库存不足被商品服务正常拒绝（根本没扣成）的情况下，引擎依然去调了一次`CompensateDeductStock`把库存凭空加多了。根因是Seata Saga按`ExecutionStatus`分`SU`/`FA`（确定失败，不需要补偿）/`UN`（不确定，仍要触发补偿）三态，默认异常全部落进`UN`。修法：新增`StockBusinessException`区分"商品服务明确返回库存不足"（这是`stock >= number`条件UPDATE判断出来的，受影响行数0，能确定完全没改数据）和"Feign调用本身失败/超时"（真正不确定，超时不代表没扣成），在JSON里显式给`Status`加一条`"$Exception{...StockBusinessException}": "FA"`，让引擎跳过这种场景下的补偿。
+  - **其它几个实测踩出来的坑**：①`spring-cloud-starter-alibaba-seata`自带的`SeataSagaAutoConfiguration`在`@ConditionalOnBean(DataSource.class)`求值时机早于这个服务自己的`DataSource`bean被创建，条件恒为false，`StateMachineEngine`拿不到——改成手写`SagaStateMachineConfiguration`，同时要记得把引擎注册进`StateMachineEngineHolder`这个静态holder（不然TC异步重试回调时报NPE，原来的autoconfiguration类顺带做了这一步，手写替换后要自己补上）。②JDK 17默认不开放`java.lang.reflect`给反射用，Seata内部对Mapper代理做反射内省会抛`InaccessibleObjectException`，Dockerfile和`pom.xml`的`spring-boot-maven-plugin`都加了`--add-opens java.base/java.lang.reflect=ALL-UNNAMED`。③`CreateOrder`最初想直接把提前查好的地址簿/购物车对象、以及整个`OrdersSubmitDTO`通过状态机的`Input`传进去，结果嵌套字段和`BigDecimal`/`Integer`这类字段过一遍引擎的参数重建之后会丢或类型对不上（`BeanUtils.copyProperties`直接报错）——改成`createOrder`只接收扁平的标量参数，地址簿/购物车/用户信息自己在方法内部重新用Feign查一次，多两次Feign调用换绑定可靠性。
+  - **实测验证**：正常下单（库存充足）、库存不足被干净拒绝（不再误触发补偿，库存/订单表都无残留改动）、故意让`CreateOrder`失败触发自动补偿（库存被`CompensateDeductStock`正确加回）——三个场景都在真实起的Seata Server+Nacos+MySQL环境下用真实HTTP请求验证过，且确认取消类接口（用户/管理端取消、拒单、超时自动取消）完全没受影响。
+  - **清理**：删掉了`StockCompensationTask`定时任务、`StockCompensationLogMapper`（含XML）、`StockCompensationLog`实体、`OrderServiceImpl`里的`persistPendingCompensation`/`restoreStockWithRetry`；`stock_compensation_log`这张表在本地dev库里实际从来没被真正建出来过，`database/migration_drop_stock_compensation_log.sql`这条`DROP TABLE IF EXISTS`是空操作，跑这条脚本是为了给可能真建过这张表的其它环境留一条清理记录。
+  - **现在真实的局限**：`CompensateDeductStock`自己失败（比如触发补偿那一刻商品服务恰好也不可达）由Seata TC的全局事务回滚重试机制持续重试，不再需要自己维护一张补偿记录表和定时任务，之前"没有自动重试兜底"这条局限已经被解决；仍然没做的是取消类那几条路径——它们是不同的业务语义，故意没有纳入这个状态机，跟"没做完"不是一回事。
+  - **顺带修掉的一个预置bug**：`OrdersSubmitDTO.packAmount`/`tablewareNumber`是`Integer`，但`Orders`实体里对应字段原来是原始类型`int`——请求体不带这两个字段时，`BeanUtils.copyProperties`试图把`null`塞进`int`的setter，抛`IllegalArgumentException`导致下单直接失败。这次改成跟DTO一致的`Integer`（数据库列本来就是`DEFAULT NULL`，改成装箱类型没有引入新的空指针场景），修掉了。
 
 ## P5：容量规划与压测
 
@@ -214,21 +222,6 @@
   - 已实测两个真实的攻击场景：boss2（shop2员工）尝试用boss1（shop1）的菜品id/套餐id发起跨店更新请求，均被正确拒绝（返回"不存在"），且事后确认shop1的数据完全没被改动。
 - [x] **真实微信支付接入**：仍然是mock状态，这次没有改。需要走完整的商户资质+PCI合规流程，属于业务/商务层面的前置条件（要真的注册微信支付商户号），不是能单靠改代码解决的问题，跟这次做的另外两条性质不一样，先留在这里。
 
-## 面试低频考点（已识别，暂不投入实施）
+## 评估过、这次不做的项
 
-这几条本来在`TODO.md`里，评估过面试出现概率后单独摘出来——不是"不该做"，是"投入产出比现在不划算，面试大概率不会问到这个粒度"，跟分布式锁、`historyOrders`索引优化这类国内后端面试高频八股文性质不同（这两条后来都已经做完，见前面对应条目）。每条尽量用几句话说清楚是什么、要做什么、真做的话怎么做：
-
-- **WebSocket连接状态迁移到Redis**：现在连接信息存在单个JVM实例的内存`Map`里，一旦水平扩到多实例，通知可能推不到人在另一个实例上的连接。真做的话：状态搬进Redis，通知改成发MQ或Redis Pub/Sub广播给所有实例，每个实例只推自己本地持有的连接。低频原因：更像"多实例实时推送"这种系统设计题里的一个子点，很少被单独拎出来问。
-- **RabbitMQ高可用**：现在单实例，挂了会丢通知（不影响下单，链路已经fail-open）。真做的话：换成镜像队列或仲裁队列集群，纯部署配置，不用改代码。低频原因：面试常问"怎么保证消息不丢/不重复"（这部分已经做了），但"broker本身怎么搭高可用集群"这种运维细节问得少。
-- **报表查询迁移出业务库**：报表现在直接查`orders`表聚合，量大了会拖慢下单主库。真做的话：把数据同步到ClickHouse等OLAP，报表查询完全走独立库，跟交易库隔离。低频原因：偏数据平台/中台方向，普通后端面试很少问到这个粒度。
-- **评分聚合短TTL缓存**：`/user/shop/list`每次都实时调评价服务问评分，没有缓存（故意的，为了评分能马上更新）。真做的话：给评分结果单独加一个10-30秒的短TTL缓存，兼顾"减少Feign调用"和"评分别太旧"。低频原因：这是这个项目自己的业务权衡细节，不是通用知识点。
-- **`review/list`索引优化**：分页查询有`Using filesort`，现在评价数据量小看不出来，量大了会重演`historyOrders`那个问题。真做的话：跟`historyOrders`一样，加`(shop_id, create_time DESC)`联合索引+游标分页。低频原因：知识点和`historyOrders`那条索引优化（已经做完，见前面对应条目）完全一样，面试官问完一次不会重复再问一次几乎一样的场景。
-- **JVM/容器资源限制**：容器之间现在没有CPU/内存边界，高并发下互相抢资源。真做的话：`java -jar`加`-Xmx`限制堆大小，`docker run`加`--cpus`/`--memory`限制。低频原因：JVM调优本身是常考点（堆/GC原理），但"容器里具体怎么配资源限制"这种运维配置细节问得少。
-
-## 面试高频但评估后不需要真做的部分
-
-这几条本身是面试高频/中高频考点，跟上面那节"低频"性质不同——只是评估下来，面试官考察的是设计能力和权衡取舍，不是"这个demo项目里有没有真的搭出来"，真做的投入和边际收益不成比例，讲清楚思路和权衡就够：
-
-- **读写分离**：没有真做。需要真搭一套MySQL主从复制+读写路由（还要处理复制延迟、"读自己刚写的数据"这类一致性问题），投入接近这次做的Redis Sentinel高可用那个量级，但对这个demo项目的边际收益太低，讲清楚路由怎么做、延迟怎么处理就够。
-- **订单表分库分表规划**：没有真做。这条本来就是设计题——原来记在`TODO.md`里的原话是"先不用真的拆，先想清楚拆分维度"，真去接分库分表中间件、做数据迁移，投入和作品集场景完全不成比例。
-- **大促流量脉冲专项预案演练**：没有真做。依赖先有一套完整的场景化压测工具链这个前置条件还没搭，且是偏运营预案性质的场景设计（提前预热热点缓存、临时调高限流阈值等），讲清楚思路比真演练一次更划算。
+面试低频考点、以及面试高频但评估后判断不需要真做的几条（读写分离、订单表分库分表、大促流量脉冲预案、`review/list`索引优化等），已经从这份文档搬到单独的[TODO.md](TODO.md)——这份文档的charter是"只收已经做完并验证过的事"（见开头），这几条本质是"分析清楚了、故意不落地"，跟已完成条目混在一起不合适。

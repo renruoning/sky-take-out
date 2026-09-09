@@ -32,6 +32,36 @@ spring:
     password: ${sky.rabbitmq.password}
     virtual-host: ${sky.rabbitmq.virtual-host}
 
+# Seata Saga：submit()下单场景"扣product-service库存+建本地订单"这一步真正的跨库分布式事务，
+# 用状态机（resources/statelang/submit_order.json）编排代替手写补偿。只有order-service（发起
+# 这个全局事务的一方）需要这一整块配置，product-service的/internal/stock/**接口不用做任何改造。
+seata:
+  application-id: sky-order-service
+  tx-service-group: sky_order_service_tx_group
+  registry:
+    type: nacos
+    nacos:
+      server-addr: localhost:8848
+      group: SEATA_GROUP
+      # Seata Server启动时以这个服务名注册进Nacos，跟这里保持一致才能被发现
+      application: seata-server
+      cluster: default
+  config:
+    # 只用本地application.yml，不需要额外去Nacos配置中心拉一份配置——跟Seata Server那边
+    # （deploy/seata-server/application.yml）同样的考虑，"client能通过Nacos服务发现找到TC"
+    # 跟"client自己的配置来源"是两回事
+    type: file
+  service:
+    vgroup-mapping:
+      # 事务分组名->TC集群名，需要跟Seata Server自己的registry.conf里的cluster配置一致
+      sky_order_service_tx_group: default
+  saga:
+    state-machine:
+      # 用这个服务默认的Hikari数据源，状态机执行日志（seata_state_machine_*表）落在
+      # sky_order_service库里，见database/migration_seata_saga_statelang_tables.sql
+      table-prefix: seata_
+      resources: classpath*:statelang/*.json
+
 mybatis:
   mapper-locations: classpath:mapper/*.xml
   type-aliases-package: com.sky.entity

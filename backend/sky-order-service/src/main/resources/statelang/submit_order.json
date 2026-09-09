@@ -1,0 +1,76 @@
+{
+    "Name": "submitOrderSaga",
+    "Comment": "下单：扣减product-service库存 -> 在order-service本地建订单，建单失败时引擎自动触发补偿（恢复库存）",
+    "StartState": "DeductStock",
+    "Version": "0.0.2",
+    "States": {
+        "DeductStock": {
+            "Type": "ServiceTask",
+            "ServiceName": "submitOrderSagaActions",
+            "ServiceMethod": "deductStock",
+            "CompensateState": "CompensateDeductStock",
+            "Input": [
+                "$.[stockItems]"
+            ],
+            "Next": "CreateOrder",
+            "Status": {
+                "$Exception{com.sky.exception.StockBusinessException}": "FA",
+                "$Exception{java.lang.Exception}": "UN",
+                "#root == null": "SU"
+            },
+            "Catch": [
+                {
+                    "Exceptions": ["java.lang.Exception"],
+                    "Next": "CompensationTrigger"
+                }
+            ]
+        },
+        "CompensateDeductStock": {
+            "Type": "ServiceTask",
+            "ServiceName": "submitOrderSagaActions",
+            "ServiceMethod": "compensateDeductStock",
+            "Input": [
+                "$.[stockItems]"
+            ]
+        },
+        "CreateOrder": {
+            "Type": "ServiceTask",
+            "ServiceName": "submitOrderSagaActions",
+            "ServiceMethod": "createOrder",
+            "Input": [
+                "$.[userId]",
+                "$.[addressBookId]",
+                "$.[payMethod]",
+                "$.[remark]",
+                "$.[estimatedDeliveryTime]",
+                "$.[deliveryStatus]",
+                "$.[tablewareNumber]",
+                "$.[tablewareStatus]",
+                "$.[packAmount]",
+                "$.[amount]"
+            ],
+            "Output": {
+                "orderSubmitResult": "$.#root"
+            },
+            "Next": "Succeed",
+            "Catch": [
+                {
+                    "Exceptions": ["java.lang.Exception"],
+                    "Next": "CompensationTrigger"
+                }
+            ]
+        },
+        "CompensationTrigger": {
+            "Type": "CompensationTrigger",
+            "Next": "Failed"
+        },
+        "Succeed": {
+            "Type": "Succeed"
+        },
+        "Failed": {
+            "Type": "Fail",
+            "ErrorCode": "SUBMIT_ORDER_FAILED",
+            "Message": "下单失败"
+        }
+    }
+}

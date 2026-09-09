@@ -1,6 +1,5 @@
 package com.sky.service.impl;
 
-import com.alibaba.fastjson.JSON;
 import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
 import com.sky.constant.MessageConstant;
@@ -18,14 +17,12 @@ import com.sky.entity.AddressBook;
 import com.sky.entity.OrderDetail;
 import com.sky.entity.Orders;
 import com.sky.entity.ShoppingCart;
-import com.sky.entity.StockCompensationLog;
-import com.sky.entity.User;
 import com.sky.exception.AddressBookBusinessException;
 import com.sky.exception.OrderBusinessException;
 import com.sky.exception.ShoppingCartBusinessException;
+import com.sky.exception.StockBusinessException;
 import com.sky.mapper.OrderDetailMapper;
 import com.sky.mapper.OrderMapper;
-import com.sky.mapper.StockCompensationLogMapper;
 import com.sky.result.Result;
 import com.sky.result.PageResult;
 import com.sky.result.CursorPageResult;
@@ -36,24 +33,18 @@ import com.sky.vo.OrderStatisticsVO;
 import com.sky.vo.OrderSubmitVO;
 import com.sky.vo.OrderVO;
 import com.sky.config.RabbitMQConfig;
+import io.seata.saga.engine.StateMachineEngine;
+import io.seata.saga.statelang.domain.ExecutionStatus;
+import io.seata.saga.statelang.domain.StateMachineInstance;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.BeanUtils;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.retry.RetryCallback;
-import org.springframework.retry.backoff.ExponentialBackOffPolicy;
-import org.springframework.retry.policy.SimpleRetryPolicy;
-import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.CollectionUtils;
 
-import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -72,14 +63,13 @@ public class OrderServiceImpl implements OrderService {
 
     private final OrderMapper orderMapper;
     private final OrderDetailMapper orderDetailMapper;
-    private final StockCompensationLogMapper stockCompensationLogMapper;
     private final SkyServerClient skyServerClient;
     private final ProductClient productClient;
     private final WeChatPayUtil weChatPayUtil;
     private final RabbitTemplate rabbitTemplate;
     private final RedisTemplate<String, Object> redisTemplate;
     private final RedissonClient redissonClient;
-    private final TransactionTemplate requiresNewTransactionTemplate;
+    private final StateMachineEngine stateMachineEngine;
 
     private static final String SUBMIT_LOCK_PREFIX = "lock:order:submit:";
     private static final Duration SUBMIT_LOCK_TTL = Duration.ofSeconds(5);
@@ -102,22 +92,19 @@ public class OrderServiceImpl implements OrderService {
             Orders.PENDING_PAYMENT, Orders.TO_BE_CONFIRMED, Orders.CONFIRMED,
             Orders.DELIVERY_IN_PROGRESS, Orders.COMPLETED);
 
-    OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper,
-                      StockCompensationLogMapper stockCompensationLogMapper, SkyServerClient skyServerClient,
+    OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, SkyServerClient skyServerClient,
                       ProductClient productClient, WeChatPayUtil weChatPayUtil, RabbitTemplate rabbitTemplate,
                       RedisTemplate<String, Object> redisTemplate, RedissonClient redissonClient,
-                      PlatformTransactionManager transactionManager) {
+                      StateMachineEngine stateMachineEngine) {
         this.orderMapper = orderMapper;
         this.orderDetailMapper = orderDetailMapper;
-        this.stockCompensationLogMapper = stockCompensationLogMapper;
         this.skyServerClient = skyServerClient;
         this.productClient = productClient;
         this.weChatPayUtil = weChatPayUtil;
         this.rabbitTemplate = rabbitTemplate;
         this.redisTemplate = redisTemplate;
         this.redissonClient = redissonClient;
-        this.requiresNewTransactionTemplate = new TransactionTemplate(transactionManager);
-        this.requiresNewTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.stateMachineEngine = stateMachineEngine;
     }
 
     /**
@@ -185,67 +172,6 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * 下单失败后的库存补偿：扣库存已经成功、但建单这一步失败了，要把库存加回去。分两层兜底：
-     * 1) 同步重试3次（1s起步指数退避到10s封顶，跟OrderTimeoutListener那条MQ重试同一组参数）；
-     * 2) 在重试之前，先把"需要恢复哪些库存"落到stock_compensation_log表（独立事务，见
-     *    persistPendingCompensation），这样同步重试3次耗尽、或者进程在补偿完成之前直接崩溃，
-     *    StockCompensationTask这个定时任务也能接手继续重试，不会像原来那样一失败就只剩一条
-     *    日志、彻底没有挽回的机会
-     */
-    private void restoreStockWithRetry(List<StockChangeItemDTO> stockItems) {
-        Long logId = persistPendingCompensation(stockItems);
-
-        RetryTemplate retryTemplate = new RetryTemplate();
-        retryTemplate.setRetryPolicy(new SimpleRetryPolicy(3));
-        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
-        backOffPolicy.setInitialInterval(1000);
-        backOffPolicy.setMultiplier(2.0);
-        backOffPolicy.setMaxInterval(10000);
-        retryTemplate.setBackOffPolicy(backOffPolicy);
-
-        try {
-            retryTemplate.execute((RetryCallback<Void, Exception>) context -> {
-                if (context.getRetryCount() > 0) {
-                    log.info("订单创建失败后回滚库存重试第{}次，stockItems={}", context.getRetryCount(), stockItems);
-                }
-                productClient.restoreStock(stockItems);
-                return null;
-            });
-            if (logId != null) {
-                stockCompensationLogMapper.markDone(logId);
-            }
-        } catch (Exception restoreEx) {
-            log.error("订单创建失败后回滚库存重试3次后仍失败（商品服务不可达/异常），出现库存扣减与订单未创建的不一致，" +
-                    "stockItems={}，已落地补偿记录{}，等待定时任务兜底重试，需要关注", stockItems, logId, restoreEx);
-        }
-    }
-
-    /**
-     * 在真正尝试补偿之前，先把"需要恢复哪些库存"落到独立的补偿记录表——必须用REQUIRES_NEW跑在
-     * 一个新事务里提交，不能让这条insert跟着submit()本身的事务一起回滚（这里正处在submit()的
-     * catch块里，外层事务注定要回滚，如果这条insert复用同一个连接/事务，写了也等于没写）。
-     * 落地失败（比如数据库也恰好不可达）只记日志、返回null——宁可没有这条兜底记录，也不能让
-     * "记录补偿意图"这个动作本身的失败，阻塞了紧接着要执行的真正补偿重试
-     */
-    private Long persistPendingCompensation(List<StockChangeItemDTO> stockItems) {
-        try {
-            return requiresNewTransactionTemplate.execute(status -> {
-                StockCompensationLog logEntry = StockCompensationLog.builder()
-                        .stockItems(JSON.toJSONString(stockItems))
-                        .status(StockCompensationLog.PENDING)
-                        .createTime(LocalDateTime.now())
-                        .updateTime(LocalDateTime.now())
-                        .build();
-                stockCompensationLogMapper.insert(logEntry);
-                return logEntry.getId();
-            });
-        } catch (Exception e) {
-            log.error("落地库存补偿记录失败（数据库异常），本次补偿将不会被定时任务兜底重试，stockItems={}", stockItems, e);
-            return null;
-        }
-    }
-
-    /**
      * 取消订单场景专用：抢到锁执行action并保证释放；抢不到锁说明这个订单同一时刻正被另一条取消路径处理，
      * 直接拒绝而不是让两边都以为自己能改，这是HTTP路径（用户/管理端手动取消）用的版本，
      * 抢不到会抛异常让调用方看到明确的"正在处理中"提示。Redisson本身不可达时fail-open：
@@ -282,11 +208,12 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * 用户下单
+     * 用户下单。不再是@Transactional——真正的两步写入（扣库存/建订单）现在交给Seata Saga状态机
+     * 编排，各自的本地事务边界在SubmitOrderSagaActions里，这里只做只读校验+启动状态机，
+     * 外层包一个Spring本地事务反而会跟Saga引擎自己的状态日志持久化产生不必要的耦合
      * @param ordersSubmitDTO
      * @return
      */
-    @Transactional
     public OrderSubmitVO submit(OrdersSubmitDTO ordersSubmitDTO) {
         Long userId = BaseContext.getCurrentId();
 
@@ -323,81 +250,44 @@ public class OrderServiceImpl implements OrderService {
 
             // 扣减库存：这个项目里唯一一处"一次业务操作要跨两个服务各自的数据库做写操作"的地方——
             // 库存扣在product-service的库，订单建在order-service自己的库，两边没法用同一个本地事务
-            // 盖住。先扣库存（product-service内部用它自己的本地事务保证这一批条目要么全扣成功要么
-            // 全不扣，见StockServiceImpl.deductStock），扣成功之后再建订单；下面建订单这一段一旦
-            // 失败，在catch里手动调用restoreStock把库存加回去——这是手写的补偿事务（saga风格），
-            // 不是Seata那种真正的分布式事务框架，如果"建单失败"和"补偿恢复库存"两步都失败（比如
-            // 商品服务在恢复库存那一刻恰好也不可达），会留下库存被扣但订单没建成的不一致，这个残余
-            // 风险窗口正是Seata/TCC这类工具存在的意义，这次没有引入那一整套机制。
+            // 盖住。用Seata Saga状态机（resources/statelang/submit_order.json）编排"扣库存->建订单"
+            // 这两步：建单失败时引擎自动调用DeductStock声明的CompensateState把库存加回去，补偿失败
+            // 由Seata TC自己的全局事务回滚重试机制持续重试，不用再自己维护一张补偿记录表和定时任务
+            // （见已删除的StockCompensationLog/StockCompensationTask）
             List<StockChangeItemDTO> stockItems = mergeStockItems(shoppingCartList,
                     ShoppingCart::getDishId, ShoppingCart::getSetmealId, ShoppingCart::getNumber);
-            Result<String> deductResult;
-            try {
-                deductResult = productClient.deductStock(stockItems);
-            } catch (Exception e) {
-                log.error("扣减库存的Feign调用失败（商品服务不可达），本次下单直接失败，不建立订单", e);
-                throw new OrderBusinessException(MessageConstant.STOCK_SERVICE_UNAVAILABLE);
-            }
-            if (deductResult == null || deductResult.getCode() == null || deductResult.getCode() != 1) {
-                String msg = (deductResult != null && deductResult.getMsg() != null)
-                        ? deductResult.getMsg() : MessageConstant.STOCK_NOT_ENOUGH;
-                throw new OrderBusinessException(msg);
-            }
 
-            try {
-                User user = unwrap(skyServerClient.getUser(userId));
+            // CreateOrder状态自己会重新查一遍地址簿/购物车（见SubmitOrderSagaActions.createOrder的注释），
+            // ordersSubmitDTO也拆成标量字段传，不整个对象传——两者都是Seata Saga参数绑定实测踩出来的坑，
+            // 详见SubmitOrderSagaActions.createOrder上面的注释
+            Map<String, Object> startParams = new HashMap<>();
+            startParams.put("stockItems", stockItems);
+            startParams.put("userId", userId);
+            startParams.put("addressBookId", ordersSubmitDTO.getAddressBookId());
+            startParams.put("payMethod", ordersSubmitDTO.getPayMethod());
+            startParams.put("remark", ordersSubmitDTO.getRemark());
+            startParams.put("estimatedDeliveryTime", ordersSubmitDTO.getEstimatedDeliveryTime());
+            startParams.put("deliveryStatus", ordersSubmitDTO.getDeliveryStatus());
+            startParams.put("tablewareNumber", ordersSubmitDTO.getTablewareNumber());
+            startParams.put("tablewareStatus", ordersSubmitDTO.getTablewareStatus());
+            startParams.put("packAmount", ordersSubmitDTO.getPackAmount());
+            startParams.put("amount", ordersSubmitDTO.getAmount());
 
-                // 插入订单：店铺id取自购物车（购物车已保证单一店铺，不信任客户端传入的店铺id）
-                Orders orders = new Orders();
-                BeanUtils.copyProperties(ordersSubmitDTO, orders);
-                orders.setNumber(String.valueOf(System.currentTimeMillis()));
-                orders.setStatus(Orders.PENDING_PAYMENT);
-                orders.setUserId(userId);
-                orders.setShopId(shoppingCartList.get(0).getShopId());
-                orders.setOrderTime(LocalDateTime.now());
-                orders.setPayStatus(Orders.UN_PAID);
-                orders.setPhone(addressBook.getPhone());
-                orders.setConsignee(addressBook.getConsignee());
-                orders.setUserName(user.getName());
-                orders.setUserAvatar(user.getAvatar());
-                orders.setAddress(addressBook.getProvinceName() + addressBook.getCityName()
-                        + addressBook.getDistrictName() + addressBook.getDetail());
+            StateMachineInstance instance = stateMachineEngine.startWithBusinessKey(
+                    "submitOrderSaga", null, UUID.randomUUID().toString(), startParams);
 
-                orderMapper.insert(orders);
-
-                // 插入订单明细
-                List<OrderDetail> orderDetailList = new ArrayList<>();
-                for (ShoppingCart cart : shoppingCartList) {
-                    OrderDetail orderDetail = new OrderDetail();
-                    BeanUtils.copyProperties(cart, orderDetail);
-                    orderDetail.setOrderId(orders.getId());
-                    orderDetailList.add(orderDetail);
+            if (instance.getStatus() != ExecutionStatus.SU) {
+                Exception ex = instance.getException();
+                log.error("提交订单的Saga状态机执行失败，status={}，stockItems={}", instance.getStatus(), stockItems, ex);
+                if (ex instanceof OrderBusinessException) {
+                    throw (OrderBusinessException) ex;
                 }
-                orderDetailMapper.insertBatch(orderDetailList);
-
-                // 清空购物车
-                skyServerClient.cleanCart(userId);
-
-                // 发送延迟消息，若30分钟后订单仍未支付则自动取消。
-                // RabbitMQ不可达不该导致下单直接失败——那样"能不能点餐"就被一个订单超时兜底机制卡住了，
-                // 代价是这一笔订单万一真没付款也不会被自动取消，需要靠人工/对账兜底，两害相权取其轻。
-                try {
-                    rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_EXCHANGE, RabbitMQConfig.ORDER_TIMEOUT_DELAY_ROUTING_KEY, orders.getId());
-                } catch (Exception e) {
-                    log.error("订单{}的超时取消延迟消息发送失败（RabbitMQ不可达），订单已正常创建，但不会被自动取消，需要人工关注", orders.getId(), e);
+                if (ex instanceof StockBusinessException) {
+                    throw new OrderBusinessException(ex.getMessage());
                 }
-
-                return OrderSubmitVO.builder()
-                        .id(orders.getId())
-                        .orderNumber(orders.getNumber())
-                        .orderAmount(orders.getAmount())
-                        .orderTime(orders.getOrderTime())
-                        .build();
-            } catch (RuntimeException e) {
-                log.error("库存已扣减但订单创建失败，回滚库存，stockItems={}", stockItems, e);
-                restoreStockWithRetry(stockItems);
-                throw e;
+                throw new OrderBusinessException(MessageConstant.STOCK_NOT_ENOUGH);
             }
+            return (OrderSubmitVO) instance.getEndParams().get("orderSubmitResult");
         } finally {
             if (lockAcquired) {
                 try {

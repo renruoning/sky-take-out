@@ -1,0 +1,65 @@
+# Seata Server（TC，事务协调者）配置。挂载到容器里覆盖官方镜像自带的
+# /seata-server/resources/application.yml（注意不是/conf/——seataio/seata-server这个镜像是Jib构建的，
+# 目录布局是resources/classes/libs，没有传统发行版那套bin/conf/lib）。
+# MySQL驱动镜像自带（/seata-server/libs/mysql-connector-java-8.0.28.jar），不需要额外挂载。
+#
+# 启动命令（在仓库根目录执行；MSYS/Git Bash下docker的-v参数会被路径转义搞坏，要加MSYS_NO_PATHCONV=1）：
+#   MSYS_NO_PATHCONV=1 docker run -d --name seata-server \
+#     -p 8092:8092 -p 7091:7091 \
+#     -e SEATA_IP=<这台机器在局域网里的真实IP，比如192.168.x.x> \
+#     -v "$(pwd)/deploy/seata-server/application.yml:/seata-server/resources/application.yml" \
+#     seataio/seata-server:1.6.1
+#
+# 关于SEATA_IP：这个环境变量决定TC注册进Nacos时用哪个地址（供order-service发现）。
+# 必须给一个真实可路由的地址——不能是127.0.0.1/0.0.0.0（Seata自己的Server.java代码显式判定
+# 这两个"not valid"，给了也会被忽略，转而fallback成NetUtil.getLocalIp()探测到的容器桥接网卡地址，
+# 比如172.17.x.x，宿主机上跑的order-service进程根本连不到那个地址）。当前这个项目里所有
+# 微服务都是跑在宿主机上的Java进程（不是容器），所以填这台开发机自己的局域网IP即可——
+# 容器发布了0.0.0.0:8091到宿主机，宿主机进程连自己的局域网IP:8091是通的。
+# 查这台机器的局域网IP：Windows下`ipconfig`看"WLAN"或"以太网"适配器的IPv4地址。
+
+server:
+  port: 7091
+
+spring:
+  application:
+    name: seata-server
+
+console:
+  user:
+    username: seata
+    password: seata
+
+seata:
+  config:
+    # 只用本地这份application.yml，不需要TC自己再去Nacos配置中心拉一份额外配置——
+    # 这里要的只是"client能通过Nacos服务发现找到TC"，跟TC自己的配置来源是两回事
+    type: file
+  registry:
+    type: nacos
+    nacos:
+      application: seata-server
+      server-addr: host.docker.internal:8848
+      group: SEATA_GROUP
+      cluster: default
+  server:
+    # 默认是server.port(7091)+1000=8091，跟这个项目里sky-server的端口(8091)撞车，改成8092避开
+    service-port: 8092
+  store:
+    mode: db
+    db:
+      datasource: druid
+      db-type: mysql
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      url: jdbc:mysql://host.docker.internal:3306/seata_server?rewriteBatchedStatements=true&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      user: root
+      password: root
+      global-table: global_table
+      branch-table: branch_table
+      lock-table: lock_table
+      distributed-lock-table: distributed_lock
+  security:
+    secretKey: SeataSecretKey0c382ef121d778043159209298fd40bf3850a017
+    tokenValidityInMilliseconds: 1800000
+    ignore:
+      urls: /,/**/*.css,/**/*.js,/**/*.html,/**/*.map,/**/*.svg,/**/*.png,/**/*.ico,/console-fe/public/**,/api/v1/auth/login

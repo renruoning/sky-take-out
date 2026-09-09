@@ -125,6 +125,13 @@
             <artifactId>spring-cloud-starter-loadbalancer</artifactId>
         </dependency>
 
+        <!-- Seata Saga：submit()下单场景"扣product-service库存+建本地订单"这一步真正的跨库分布式事务，
+             用状态机编排替换掉原来手写的restoreStockWithRetry/StockCompensationLog补偿逻辑 -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>
@@ -132,6 +139,12 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Seata客户端(GlobalTransactionScanner)会用反射内省MyBatis生成的Mapper动态代理，
+                         JDK 17模块系统默认禁止，不加这个VM参数启动会直接抛InaccessibleObjectException。
+                         用IDE跑（不走这个插件）的话，要在Run Configuration的VM options里手动加同一个参数 -->
+                    <jvmArguments>--add-opens java.base/java.lang.reflect=ALL-UNNAMED</jvmArguments>
+                </configuration>
             </plugin>
         </plugins>
     </build>
