@@ -68,6 +68,11 @@ CREATE TABLE `orders` (
   `tableware_status` tinyint(1) NOT NULL DEFAULT '1' COMMENT '餐具数量状态  1按餐量提供  0选择具体数量',
   `stock_restored` tinyint(1) NOT NULL DEFAULT '0' COMMENT '库存是否已恢复 0否 1是（取消/拒单/超时取消时置1，防止重复恢复）',
   PRIMARY KEY (`id`),
+  -- 订单号唯一索引：原来的生成方式（System.currentTimeMillis()转字符串）没有唯一性保证，
+  -- 换成号段模式（见order_number_segment表）从根上解决之后，这里再加一层数据库约束兜底——
+  -- 即使生成逻辑将来又出bug，插入时也会直接报错拦下来，不会让number被当查找键用的地方
+  -- （payment()/微信支付回调的getByNumber()）在查询时才炸TooManyResultsException
+  UNIQUE KEY `uk_orders_number` (`number`),
   KEY `idx_orders_status_order_time` (`status`,`order_time`),
   KEY `idx_orders_user_id` (`user_id`),
   -- historyOrders游标分页（WHERE user_id = ? AND (order_time,id)在keyset之前 ORDER BY order_time DESC, id DESC）
@@ -78,13 +83,10 @@ CREATE TABLE `orders` (
   KEY `idx_orders_user_time` (`user_id`,`order_time` DESC,`id` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8_bin COMMENT='订单表';
 
--- 下单失败后的库存补偿兜底，见migration_stock_compensation_log.sql的说明
-CREATE TABLE `stock_compensation_log` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `stock_items` text NOT NULL COMMENT '需要恢复的库存明细（JSON序列化的List<StockChangeItemDTO>）',
-  `status` tinyint(1) NOT NULL DEFAULT '0' COMMENT '0待补偿 1已完成',
-  `create_time` datetime NOT NULL,
-  `update_time` datetime NOT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_status_create_time` (`status`,`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='下单失败后的库存补偿记录，配合定时任务兜底重试';
+-- 订单号号段分配表，见com.sky.ordernumber包+migration_order_number_segment.sql的说明
+CREATE TABLE `order_number_segment` (
+  `biz_key` varchar(32) NOT NULL COMMENT '业务标识，这个项目目前只有一个"orders"',
+  `max_id` bigint NOT NULL DEFAULT 0 COMMENT '当前已分配到的最大id，号段分配靠这一列原子UPDATE递增',
+  `step` int NOT NULL DEFAULT 1000 COMMENT '每次分配的号段步长',
+  PRIMARY KEY (`biz_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单号号段分配表';

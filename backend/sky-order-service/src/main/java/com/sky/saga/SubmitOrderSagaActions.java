@@ -15,6 +15,7 @@ import com.sky.exception.OrderBusinessException;
 import com.sky.exception.StockBusinessException;
 import com.sky.mapper.OrderDetailMapper;
 import com.sky.mapper.OrderMapper;
+import com.sky.ordernumber.OrderNumberGenerator;
 import com.sky.result.Result;
 import com.sky.vo.OrderSubmitVO;
 import lombok.extern.slf4j.Slf4j;
@@ -45,14 +46,17 @@ public class SubmitOrderSagaActions {
     private final OrderDetailMapper orderDetailMapper;
     private final SkyServerClient skyServerClient;
     private final RabbitTemplate rabbitTemplate;
+    private final OrderNumberGenerator orderNumberGenerator;
 
     SubmitOrderSagaActions(ProductClient productClient, OrderMapper orderMapper, OrderDetailMapper orderDetailMapper,
-                            SkyServerClient skyServerClient, RabbitTemplate rabbitTemplate) {
+                            SkyServerClient skyServerClient, RabbitTemplate rabbitTemplate,
+                            OrderNumberGenerator orderNumberGenerator) {
         this.productClient = productClient;
         this.orderMapper = orderMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.skyServerClient = skyServerClient;
         this.rabbitTemplate = rabbitTemplate;
+        this.orderNumberGenerator = orderNumberGenerator;
     }
 
     private static <T> T unwrap(Result<T> result) {
@@ -133,7 +137,7 @@ public class SubmitOrderSagaActions {
         // 插入订单：店铺id取自购物车（购物车已保证单一店铺，不信任客户端传入的店铺id）
         Orders orders = new Orders();
         BeanUtils.copyProperties(ordersSubmitDTO, orders);
-        orders.setNumber(String.valueOf(System.currentTimeMillis()));
+        orders.setNumber(orderNumberGenerator.nextOrderNumber());
         orders.setStatus(Orders.PENDING_PAYMENT);
         orders.setUserId(userId);
         orders.setShopId(shoppingCartList.get(0).getShopId());
