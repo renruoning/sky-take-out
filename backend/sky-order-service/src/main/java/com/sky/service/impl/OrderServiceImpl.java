@@ -93,6 +93,16 @@ public class OrderServiceImpl implements OrderService {
             Orders.PENDING_PAYMENT, Orders.TO_BE_CONFIRMED, Orders.CONFIRMED,
             Orders.DELIVERY_IN_PROGRESS, Orders.COMPLETED);
 
+    // confirm/delivery/complete这组往前推进的状态流转，原来只有delivery/complete做了"读了再判断"，
+    // confirm连这一步都没有；而且三个都不是CAS，判断和UPDATE之间隔着一次网络往返，不是原子的。
+    // 这组转换本身没有像取消那样触发非幂等的副作用（不涉及恢复库存），理论上竞态只会导致同一个
+    // 目标状态被写两遍、结果一致，不会产生脏数据，但"连状态校验都没有"（confirm）是另一个问题——
+    // 不校验的话，对一笔已经是CANCELLED/COMPLETED的订单调confirm，会被悄悄翻回CONFIRMED，
+    // 这跟并发无关，是纯粹的正确性缺口。统一换成CAS，顺带把这两个问题一次性解决
+    private static final List<Integer> CONFIRMABLE = List.of(Orders.TO_BE_CONFIRMED);
+    private static final List<Integer> DELIVERABLE = List.of(Orders.CONFIRMED);
+    private static final List<Integer> COMPLETABLE = List.of(Orders.DELIVERY_IN_PROGRESS);
+
     OrderServiceImpl(OrderMapper orderMapper, OrderDetailMapper orderDetailMapper, SkyServerClient skyServerClient,
                       ProductClient productClient, WeChatPayUtil weChatPayUtil, RabbitTemplate rabbitTemplate,
                       RedisTemplate<String, Object> redisTemplate, RedissonClient redissonClient,
@@ -599,7 +609,10 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * 接单
+     * 接单。原来这里不做任何状态校验就直接UPDATE——对一笔已经是CANCELLED/COMPLETED的订单调用，
+     * 会被悄悄翻回CONFIRMED，是纯粹的正确性缺口，跟并发无关；换成CAS之后这个缺口和"重复调用
+     * 是否幂等"一起解决：不在CONFIRMABLE状态集合里，UPDATE直接0行，明确报ORDER_STATUS_ERROR，
+     * 不会静默生效
      * @param ordersConfirmDTO
      */
     public void confirm(OrdersConfirmDTO ordersConfirmDTO) {
@@ -610,7 +623,9 @@ public class OrderServiceImpl implements OrderService {
                 .status(Orders.CONFIRMED)
                 .build();
 
-        orderMapper.update(orders);
+        if (orderMapper.updateWithStatusGuard(orders, CONFIRMABLE) == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
     }
 
     /**
@@ -713,47 +728,40 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * 派送订单
+     * 派送订单。原来是"读一次状态判断，再单独UPDATE"，中间隔着一次网络往返不是原子的——
+     * 换成CAS，判断和写合并成一条SQL，不用再单独查一次ordersDB
      * @param id
      */
     public void delivery(Long id) {
         // 根据id查询订单，并校验归属当前店铺
         checkOrderBelongsToCurrentShop(id);
-        Orders ordersDB = orderMapper.getById(id);
-
-        // 校验订单是否存在，并且状态为3
-        if (ordersDB == null || !ordersDB.getStatus().equals(Orders.CONFIRMED)) {
-            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
-        }
 
         Orders orders = new Orders();
-        orders.setId(ordersDB.getId());
+        orders.setId(id);
         // 更新订单状态,状态转为派送中
         orders.setStatus(Orders.DELIVERY_IN_PROGRESS);
 
-        orderMapper.update(orders);
+        if (orderMapper.updateWithStatusGuard(orders, DELIVERABLE) == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
     }
 
     /**
-     * 完成订单
+     * 完成订单，理由同delivery()——换成CAS，不用再单独查一次ordersDB
      * @param id
      */
     public void complete(Long id) {
         // 根据id查询订单，并校验归属当前店铺
         checkOrderBelongsToCurrentShop(id);
-        Orders ordersDB = orderMapper.getById(id);
-
-        // 校验订单是否存在，并且状态为4
-        if (ordersDB == null || !ordersDB.getStatus().equals(Orders.DELIVERY_IN_PROGRESS)) {
-            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
-        }
 
         Orders orders = new Orders();
-        orders.setId(ordersDB.getId());
+        orders.setId(id);
         // 更新订单状态,状态转为完成
         orders.setStatus(Orders.COMPLETED);
         orders.setDeliveryTime(LocalDateTime.now());
 
-        orderMapper.update(orders);
+        if (orderMapper.updateWithStatusGuard(orders, COMPLETABLE) == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
     }
 }
